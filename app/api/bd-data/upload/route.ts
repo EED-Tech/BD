@@ -3,8 +3,6 @@ import * as XLSX from "xlsx"
 
 export async function POST(request: NextRequest) {
   try {
-    console.log("[Upload API] Processing file upload...")
-
     const formData = await request.formData()
     const file = formData.get("file") as File
 
@@ -12,221 +10,253 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "No file provided" }, { status: 400 })
     }
 
-    console.log("[Upload API] File received:", file.name, "Size:", file.size)
-
-    // Validate file type
-    const validTypes = ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]
-
+    const validTypes = [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+    ]
     if (!validTypes.includes(file.type) && !file.name.endsWith(".xlsx") && !file.name.endsWith(".xls")) {
       return NextResponse.json(
         { success: false, error: "Invalid file type. Please upload an Excel file (.xlsx or .xls)" },
-        { status: 400 },
+        { status: 400 }
       )
     }
 
-    // Read file
     const arrayBuffer = await file.arrayBuffer()
-    const workbook = XLSX.read(arrayBuffer, { type: "array" })
-
-    // Find the main sheet
+    const workbook = XLSX.read(arrayBuffer, { type: "array", cellDates: true })
     const sheetNames = workbook.SheetNames
-    console.log("[Upload API] Available sheets:", sheetNames)
+    console.log("[Upload API] Sheets found:", sheetNames)
 
-    const mainSheet =
-      sheetNames.find((name) => name.toLowerCase().includes("bd") || name.toLowerCase().includes("tracker")) ||
-      sheetNames[0]
+    // ── BD Tracker rows (EOIs + Proposals) ──────────────────────────────────
+    const eoiSheet   = sheetNames.find((n) => /eoi/i.test(n))
+    const propSheet  = sheetNames.find((n) => /proposal/i.test(n))
 
-    console.log("[Upload API] Using sheet:", mainSheet)
+    const eoiRows   = eoiSheet  ? sheetToRows(workbook.Sheets[eoiSheet])  : []
+    const propRows  = propSheet ? sheetToRows(workbook.Sheets[propSheet]) : []
 
-    const worksheet = workbook.Sheets[mainSheet]
-    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" })
+    const eoiRecords  = parseBDRows(eoiRows,  "EOI")
+    const propRecords = parseBDRows(propRows, "RFP")
+    const bdRecords   = [...eoiRecords, ...propRecords]
 
-    // Parse the Excel data
-    const parsedData = parseExcelData(jsonData as any[][])
+    // ── Partners ─────────────────────────────────────────────────────────────
+    const firmSheet   = sheetNames.find((n) => /firm/i.test(n))
+    const expertSheet = sheetNames.find((n) => /individual|expert/i.test(n))
 
-    console.log(`[Upload API] Parsed ${parsedData.length} records from Excel`)
+    const firmRows   = firmSheet   ? sheetToRows(workbook.Sheets[firmSheet])   : []
+    const expertRows = expertSheet ? sheetToRows(workbook.Sheets[expertSheet]) : []
+
+    const firmPartners   = parseFirmRows(firmRows)
+    const expertPartners = parseExpertRows(expertRows)
+    const partnerRecords = [...firmPartners, ...expertPartners]
+
+    console.log(`[Upload API] BD records: ${bdRecords.length} | Partners: ${partnerRecords.length}`)
 
     return NextResponse.json({
       success: true,
-      data: parsedData,
+      data: bdRecords,
+      partners: partnerRecords,
       source: "upload",
       stats: {
-        totalRecords: parsedData.length,
+        totalRecords: bdRecords.length,
+        eoiCount: eoiRecords.length,
+        proposalCount: propRecords.length,
+        partnerCount: partnerRecords.length,
         lastModified: new Date().toISOString(),
         fileSize: arrayBuffer.byteLength,
         sheets: sheetNames,
-        source: "upload",
         fileName: file.name,
       },
     })
   } catch (error) {
-    console.error("[Upload API] Error processing file:", error)
+    console.error("[Upload API] Error:", error)
     return NextResponse.json(
-      {
-        success: false,
-        error: `Failed to process Excel file: ${error instanceof Error ? error.message : "Unknown error"}`,
-      },
-      { status: 500 },
+      { success: false, error: `Failed to process file: ${error instanceof Error ? error.message : "Unknown error"}` },
+      { status: 500 }
     )
   }
 }
 
-function parseExcelData(rawData: any[][]): any[] {
-  if (!rawData || rawData.length < 2) {
-    console.log("[Parser] No data to parse")
-    return []
-  }
+// ─── helpers ────────────────────────────────────────────────────────────────
 
-  console.log("[Parser] Raw data rows:", rawData.length)
+function sheetToRows(ws: XLSX.WorkSheet): any[][] {
+  return XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false }) as any[][]
+}
 
-  // Find header row - look for the exact headers from your data
-  let headerRowIndex = 0
-  for (let i = 0; i < Math.min(10, rawData.length); i++) {
-    const row = rawData[i]
-    if (row && row.length > 5) {
-      const rowStr = row.join(" ").toLowerCase()
-      if (
-        rowStr.includes("serial number") ||
-        rowStr.includes("project title") ||
-        rowStr.includes("business line") ||
-        rowStr.includes("budget (us$)")
-      ) {
-        headerRowIndex = i
-        break
-      }
-    }
-  }
-
-  const headers = rawData[headerRowIndex]
-  console.log("[Parser] Headers found at row", headerRowIndex, ":", headers)
-
-  const dataRows = rawData.slice(headerRowIndex + 1)
-  console.log("[Parser] Data rows to process:", dataRows.length)
-
-  // Create exact column mapping based on your Excel headers
-  const columnMap: Record<string, number> = {}
-
-  headers.forEach((header, index) => {
-    if (!header) return
-    const headerStr = header.toString().toLowerCase().trim()
-
-    // Map exact headers from your Excel data
-    if (headerStr === "serial number") {
-      columnMap.serialNumber = index
-    } else if (headerStr === "bd") {
-      columnMap.bd = index
-    } else if (headerStr === "quarter") {
-      columnMap.quarter = index
-    } else if (headerStr === "type of client") {
-      columnMap.client = index
-    } else if (headerStr === "name of organization") {
-      columnMap.organization = index
-    } else if (headerStr === "project title") {
-      columnMap.title = index
-    } else if (headerStr === "business line") {
-      columnMap.businessLine = index
-    } else if (headerStr === "service offering") {
-      columnMap.serviceOffering = index
-    } else if (headerStr === "type of bd") {
-      columnMap.typeBD = index
-    } else if (headerStr === "country covered") {
-      columnMap.country = index
-    } else if (headerStr === "origin of bd") {
-      columnMap.origin = index
-    } else if (headerStr === "external deadline") {
-      columnMap.deadline = index
-    } else if (headerStr === "cvs & project profiles") {
-      columnMap.cvsProfiles = index
-    } else if (headerStr === "workplan & budget") {
-      columnMap.workplanBudget = index
-    } else if (headerStr === "methodology") {
-      columnMap.methodology = index
-    } else if (headerStr === "other activity") {
-      columnMap.otherActivity = index
-    } else if (headerStr === "partners") {
-      columnMap.partners = index
-    } else if (headerStr === "pc") {
-      columnMap.pc = index
-    } else if (headerStr === "pd") {
-      columnMap.pd = index
-    } else if (headerStr === "budget (us$)") {
-      columnMap.budget = index
-    } else if (headerStr === "status") {
-      columnMap.status = index
-    } else if (headerStr === "timeframe (months)") {
-      columnMap.timeframe = index
-    }
+function buildColumnMap(headers: any[]): Record<string, number> {
+  const map: Record<string, number> = {}
+  headers.forEach((h, i) => {
+    if (!h) return
+    const s = h.toString().toLowerCase().trim().replace(/\s+/g, " ")
+    map[s] = i
   })
+  return map
+}
 
-  console.log("[Parser] Column mapping:", columnMap)
+function str(v: any): string {
+  if (v === null || v === undefined) return ""
+  return v.toString().trim()
+}
+
+function num(v: any): number {
+  if (typeof v === "number") return v
+  if (typeof v === "string") {
+    const n = parseFloat(v.replace(/[,$\s]/g, ""))
+    return isNaN(n) ? 0 : n
+  }
+  return 0
+}
+
+// ─── BD rows parser ─────────────────────────────────────────────────────────
+
+function parseBDRows(rawData: any[][], bdType: "EOI" | "RFP"): any[] {
+  if (!rawData || rawData.length < 2) return []
+
+  // find header row
+  let headerIdx = 0
+  for (let i = 0; i < Math.min(5, rawData.length); i++) {
+    const joined = rawData[i].join(" ").toLowerCase()
+    if (joined.includes("serial number") || joined.includes("project title")) { headerIdx = i; break }
+  }
+
+  const colMap = buildColumnMap(rawData[headerIdx])
+  const dataRows = rawData.slice(headerIdx + 1)
+
+  const get = (row: any[], key: string) => {
+    const idx = colMap[key]
+    return idx !== undefined ? row[idx] ?? "" : ""
+  }
 
   const records: any[] = []
+  dataRows.forEach((row, ri) => {
+    if (!row || !row.some((c: any) => c !== null && c !== undefined && c.toString().trim() !== "")) return
 
-  for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
-    const row = dataRows[rowIndex]
-    if (!row || row.length === 0) continue
+    const title = str(get(row, "project title"))
+    const org   = str(get(row, "name of organization"))
+    if (!title && !org) return
 
-    // Skip completely empty rows
-    const hasData = row.some((cell) => cell !== null && cell !== undefined && cell.toString().trim() !== "")
-    if (!hasData) continue
-
-    const getValue = (field: string): any => {
-      const index = columnMap[field]
-      if (index === undefined) return ""
-      const value = row[index]
-      return value !== null && value !== undefined ? value : ""
-    }
-
-    const parseNumber = (value: any): number => {
-      if (typeof value === "number") return value
-      if (typeof value === "string") {
-        const cleaned = value.replace(/[,$\s]/g, "")
-        const parsed = Number.parseFloat(cleaned)
-        return isNaN(parsed) ? 0 : parsed
-      }
-      return 0
-    }
-
-    const parseString = (value: any): string => {
-      if (value === null || value === undefined) return ""
-      return value.toString().trim()
-    }
-
-    // Create record with all fields
-    const record = {
-      id: `bd_${Date.now()}_${rowIndex}_${Math.random().toString(36).substr(2, 9)}`,
-      serialNumber: parseNumber(getValue("serialNumber")) || rowIndex + 1,
-      bd: parseString(getValue("bd")),
-      quarter: parseString(getValue("quarter")),
-      client: parseString(getValue("client")),
-      organization: parseString(getValue("organization")),
-      title: parseString(getValue("title")),
-      businessLine: parseString(getValue("businessLine")),
-      serviceOffering: parseString(getValue("serviceOffering")),
-      typeBD: parseString(getValue("typeBD")),
-      country: parseString(getValue("country")),
-      origin: parseString(getValue("origin")),
-      deadline: parseString(getValue("deadline")),
-      cvsProfiles: parseString(getValue("cvsProfiles")),
-      workplanBudget: parseString(getValue("workplanBudget")),
-      methodology: parseString(getValue("methodology")),
-      otherActivity: parseString(getValue("otherActivity")),
-      partners: parseString(getValue("partners")),
-      pc: parseString(getValue("pc")),
-      pd: parseString(getValue("pd")),
-      budget: parseNumber(getValue("budget")),
-      status: parseString(getValue("status")),
-      timeframe: parseString(getValue("timeframe")),
+    records.push({
+      id: `${bdType}_${ri}_${Math.random().toString(36).substr(2, 6)}`,
+      bd: bdType,
+      serialNumber: num(get(row, "serial number")) || ri + 1,
+      year: str(get(row, "year")),
+      quarter: str(get(row, "quarter")),
+      client: str(get(row, "type of client")),
+      organization: org,
+      title,
+      businessLine: str(get(row, "business line")),
+      serviceOffering: str(get(row, "service offering")),
+      typeBD: str(get(row, "type of bd")),
+      country: str(get(row, "country covered")),
+      origin: str(get(row, "origin of bd")),
+      deadline: str(get(row, "external deadline")),
+      cvsProfiles: str(get(row, "cvs & project profiles")),
+      workplanBudget: str(get(row, "workplan & budget")),
+      methodology: str(get(row, "methodology")),
+      otherActivity: str(get(row, "other activity")),
+      partners: str(get(row, "partners")),
+      pc: str(get(row, "pc")),
+      pd: str(get(row, "pd")),
+      budget: num(get(row, "budget (us$)")),
+      // EOI sheet has "Status" column; Proposal sheet has "Won" column
+      status: str(get(row, "status")) || str(get(row, "won")),
+      timeframe: str(get(row, "timeframe (months)")),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    }
+    })
+  })
 
-    // Only include records that have meaningful data
-    if (record.bd || record.title || record.client) {
-      records.push(record)
-    }
+  return records
+}
+
+// ─── Partners Firms parser ───────────────────────────────────────────────────
+
+function parseFirmRows(rawData: any[][]): any[] {
+  if (!rawData || rawData.length < 2) return []
+
+  let headerIdx = 0
+  for (let i = 0; i < Math.min(5, rawData.length); i++) {
+    const joined = rawData[i].join(" ").toLowerCase()
+    if (joined.includes("name of firm") || joined.includes("country hq")) { headerIdx = i; break }
   }
 
-  console.log(`[Parser] Created ${records.length} valid records`)
+  const colMap = buildColumnMap(rawData[headerIdx])
+  const dataRows = rawData.slice(headerIdx + 1)
+
+  const get = (row: any[], key: string) => {
+    const idx = colMap[key]
+    return idx !== undefined ? row[idx] ?? "" : ""
+  }
+
+  const records: any[] = []
+  dataRows.forEach((row, ri) => {
+    if (!row || !row.some((c: any) => c !== null && c !== undefined && c.toString().trim() !== "")) return
+    const name = str(get(row, "name of firm"))
+    if (!name) return
+
+    records.push({
+      id: `firm_${ri}_${Math.random().toString(36).substr(2, 6)}`,
+      type: "firm",
+      name,
+      country: str(get(row, "country hq")),
+      regional: str(get(row, "regional (list the countries)")),
+      global: str(get(row, "global (yes/no)")),
+      yearFounded: str(get(row, "year founded")),
+      contact_person: str(get(row, "name of contact person")),
+      designation: str(get(row, "designation")),
+      email: str(get(row, "email")),
+      phone: str(get(row, "phone")),
+      website: str(get(row, "website")),
+      workedWithBefore: str(get(row, "have we worked with them in the past (yes/no)")),
+      cvUploaded: str(get(row, "cv uploaded (yes/no)")),
+      sector: "",       // firms sheet has no sector column – leave blank
+      expertise: "",
+    })
+  })
+
+  return records
+}
+
+// ─── Partners Individual Experts parser ──────────────────────────────────────
+
+function parseExpertRows(rawData: any[][]): any[] {
+  if (!rawData || rawData.length < 2) return []
+
+  let headerIdx = 0
+  for (let i = 0; i < Math.min(5, rawData.length); i++) {
+    const joined = rawData[i].join(" ").toLowerCase()
+    if (joined.includes("name of expert") || joined.includes("expertise")) { headerIdx = i; break }
+  }
+
+  const colMap = buildColumnMap(rawData[headerIdx])
+  const dataRows = rawData.slice(headerIdx + 1)
+
+  const get = (row: any[], key: string) => {
+    const idx = colMap[key]
+    return idx !== undefined ? row[idx] ?? "" : ""
+  }
+
+  const records: any[] = []
+  dataRows.forEach((row, ri) => {
+    if (!row || !row.some((c: any) => c !== null && c !== undefined && c.toString().trim() !== "")) return
+    const name = str(get(row, "name of expert"))
+    if (!name) return
+
+    records.push({
+      id: `expert_${ri}_${Math.random().toString(36).substr(2, 6)}`,
+      type: "individual",
+      name,
+      expertise: str(get(row, "expertise")),
+      sector: str(get(row, "sector")),
+      country: str(get(row, "country")),
+      email: str(get(row, "email")),
+      phone: str(get(row, "phone number")),
+      workedWithBefore: str(get(row, "have we worked with this expert before? (yes/no)")),
+      dailyRate: str(get(row, "daily rate")),
+      cvUploaded: str(get(row, "cv uploaded (yes/no)")),
+      contact_person: "",
+      designation: "",
+      website: "",
+    })
+  })
+
   return records
 }

@@ -38,7 +38,6 @@ import {
   Download,
   ChevronDown,
   ChevronUp,
-  Database,
   Filter,
 } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -51,8 +50,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import dynamic from "next/dynamic"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { useTheme } from "@/components/theme-provider"
-import { useSupabaseExcelData } from "@/hooks/use-supabase-excel-data"
-import { DataStatus } from "@/components/data-status"
+import { useLocalExcelData } from "@/hooks/use-local-excel-data"
 import { ExcelUpload } from "@/components/excel-upload"
 import PartnersMapComponent from "@/components/partners-map-component"
 import { ReportContent } from "@/components/report-content"
@@ -127,18 +125,20 @@ export default function PowerBIDashboard() {
 
   const {
     data: rawDataset,
+    partners,
     stats,
     loading: dataLoading,
     error: dataError,
     lastUpdated,
-    refreshData,
-    isConnected,
+    hasData,
+    fileName: loadedFileName,
+    loadFromUpload,
+    clearData,
     filterByType,
-  } = useSupabaseExcelData()
+  } = useLocalExcelData()
 
   const [activeTab, setActiveTab] = useState("overview")
   const [dataTypeFilter, setDataTypeFilter] = useState<"all" | "EOI" | "Proposal">("all")
-  const [dataStatusOpen, setDataStatusOpen] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [activeFilters, setActiveFilters] = useState({
     quarter: "Q2",
@@ -168,11 +168,10 @@ export default function PowerBIDashboard() {
     budgetData: [],
   })
 
-  const [uploadedData, setUploadedData] = useState<any[] | null>(null)
 
   // Extract unique years from data
   const getAvailableYears = useCallback(() => {
-    const dataSource = uploadedData || rawDataset
+    const dataSource = rawDataset
     if (!dataSource || dataSource.length === 0) return ["All Years"]
     
     const yearsSet = new Set<string>()
@@ -193,7 +192,7 @@ export default function PowerBIDashboard() {
       if (b === "All Years") return 1
       return parseInt(b) - parseInt(a)
     })
-  }, [rawDataset, uploadedData])
+  }, [rawDataset])
 
   const [availableYears, setAvailableYears] = useState<string[]>([])
 
@@ -252,26 +251,9 @@ export default function PowerBIDashboard() {
 
     let filtered = [...data]
 
-    if (activeFilters.year !== "All Years") {
-      filtered = filtered.filter((item) => {
-        // First try to use the year column directly
-        if (item.year) {
-          return item.year.toString().trim() === activeFilters.year
-        }
-        // Fallback to extracting from submission date if year column doesn't exist
-        if (item.submissionDate) {
-          const submissionYear = new Date(item.submissionDate).getFullYear().toString()
-          return submissionYear === activeFilters.year
-        }
-        return false
-      })
-    }
-
-    if (activeFilters.quarter !== "All Quarters") {
-      filtered = filtered.filter((item) => {
-        return item.quarter === activeFilters.quarter
-      })
-    }
+    // The dataset passed in is already year+quarter filtered at the BD record level.
+    // We only need to apply team-member filter here and cross-check against
+    // the filtered project titles so team entries stay in sync.
 
     if (activeFilters.teamMembers.length > 0) {
       filtered = filtered.filter((item) => item.name && activeFilters.teamMembers.includes(item.name))
@@ -350,9 +332,9 @@ export default function PowerBIDashboard() {
     return deadlineNormalized >= today
   }
 
-  const handleUploadedData = (data: any[]) => {
-    setUploadedData(data)
-    console.log("Uploaded data received:", data.length, "records")
+  const handleUploadedData = (data: any[], partnerData: any[], fileMeta: { name: string; size: number; sheets?: string[]; eoiCount?: number; proposalCount?: number; partnerCount?: number }) => {
+    loadFromUpload(data, partnerData, fileMeta)
+    console.log("Uploaded data received:", data.length, "records,", partnerData.length, "partners")
   }
 
   const handleUploadError = (error: string) => {
@@ -451,9 +433,10 @@ export default function PowerBIDashboard() {
               name: memberName,
               value: 1,
               role: roleNames[role],
-              submissionDate: "2025-01-15", // This is a placeholder, consider dynamic date if available in raw data
-              projectTitle: item.title || "",
+              year: item.year || "",
               quarter: item.quarter || "",
+              projectTitle: item.title || "",
+              bd: item.bd || "",
             })
           }
         }
@@ -672,7 +655,7 @@ export default function PowerBIDashboard() {
   useEffect(() => {
     if (filteredData.rawData && filteredData.rawData.length > 0) {
       console.log(
-        "[EED] Sample deadline data:",
+        "[v0] Sample deadline data:",
         filteredData.rawData.slice(0, 5).map((item) => ({
           title: item.title,
           deadline: item.deadline,
@@ -681,8 +664,8 @@ export default function PowerBIDashboard() {
           isNext7Days: isWithinNext7Days(item.deadline),
         })),
       )
-      console.log("[EED] Total future deadlines:", totalFutureDeadlines)
-      console.log("[EED] Upcoming deadlines (next 7 days):", upcomingDeadlines)
+      console.log("[v0] Total future deadlines:", totalFutureDeadlines)
+      console.log("[v0] Upcoming deadlines (next 7 days):", upcomingDeadlines)
     }
   }, [filteredData.rawData, totalFutureDeadlines, upcomingDeadlines])
 
@@ -691,7 +674,7 @@ export default function PowerBIDashboard() {
     console.log("Active filters:", activeFilters)
     console.log("Data type filter:", dataTypeFilter)
 
-    const dataSource = uploadedData || rawDataset
+    const dataSource = rawDataset
     if (!dataSource || dataSource.length === 0) {
       console.log("No raw data available")
       setFilteredData({
@@ -760,7 +743,7 @@ export default function PowerBIDashboard() {
         // Keep all non-BD records (teams, partners, etc.)
         return true
       })
-      console.log(`[EED] Year filter (${activeFilters.year}): ${beforeCount} -> ${filteredRawData.length} records`)
+      console.log(`[v0] Year filter (${activeFilters.year}): ${beforeCount} -> ${filteredRawData.length} records`)
     }
 
     if (activeFilters.country !== "All") {
@@ -864,7 +847,7 @@ export default function PowerBIDashboard() {
     // CORRECTED CALL: Pass activeFilters.teamGroup to generateTeamAssignmentData
     const teamAssignmentData = generateTeamAssignmentData(filteredRawData, activeFilters.teamGroup)
     const filteredTeamData = filterTeamDataByDate(teamAssignmentData, filteredRawData)
-    console.log("[EED] Filtered data for team calc:", {
+    console.log("[v0] Filtered data for team calc:", {
       year: activeFilters.year,
       filteredRawDataCount: filteredRawData.length,
       sample2026Records: filteredRawData.filter(r => r.year === "2026").slice(0, 2).map(r => ({ pc: r.pc, pd: r.pd, methodology: r.methodology })),
@@ -914,7 +897,7 @@ export default function PowerBIDashboard() {
 
     console.log("Generated filtered data:", newFilteredData)
     setFilteredData(newFilteredData)
-  }, [activeFilters, rawDataset, uploadedData, dataTypeFilter, filterByType])
+  }, [activeFilters, rawDataset, dataTypeFilter, filterByType])
 
   if (dataLoading && (!rawDataset || rawDataset.length === 0)) {
     return (
@@ -933,21 +916,22 @@ export default function PowerBIDashboard() {
     )
   }
 
-  if (dataError && !dataError.includes("polling mode") && (!rawDataset || rawDataset.length === 0)) {
+  if (dataError && (!rawDataset || rawDataset.length === 0)) {
     return (
       <div className="flex flex-col min-h-screen bg-gray-50 dark:bg-gray-900">
         <header className="bg-[#383e80] text-white px-6 py-4">
           <h1 className="text-2xl font-bold">Business Development Dashboard</h1>
         </header>
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
+          <div className="text-center max-w-md">
             <div className="h-12 w-12 bg-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
               <span className="text-white font-bold">!</span>
             </div>
-            <p className="text-red-600 dark:text-red-400 mb-4">Error loading data: {dataError}</p>
-            <Button onClick={refreshData} className="bg-[#383e80] hover:bg-[#383e80]/90">
-              Try Again
-            </Button>
+            <p className="text-red-600 dark:text-red-400 mb-4">Error reading file: {dataError}</p>
+            <p className="text-gray-500 text-sm">Try uploading the Excel file again below.</p>
+            <div className="mt-6">
+              <ExcelUpload onDataLoaded={handleUploadedData} onError={handleUploadError} />
+            </div>
           </div>
         </div>
       </div>
@@ -1108,56 +1092,39 @@ export default function PowerBIDashboard() {
 
       <div className="flex-1 p-6">
         <div className="mb-6">
-          <Collapsible open={dataStatusOpen} onOpenChange={setDataStatusOpen}>
-            <Card className="border-[#6b7dd1]/20 dark:border-[#6b7dd1]/20 dark:bg-gray-800">
-              <CollapsibleTrigger asChild>
-                <CardHeader className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                  <CardTitle className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Database className="h-5 w-5 text-[#383e80]" />
-                      <span>Data Connection Status</span>
-                      {!isConnected && (
-                        <Badge
-                          variant="secondary"
-                          className="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
-                        >
-                          Offline Mode
-                        </Badge>
+          <Card className="border-[#6b7dd1]/20 dark:border-[#6b7dd1]/20 dark:bg-gray-800">
+            <CardHeader className="py-3 px-4">
+              <CardTitle className="flex items-center justify-between text-sm font-medium">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-[#383e80]" />
+                  {hasData ? (
+                    <span className="text-gray-700 dark:text-gray-200">
+                      <span className="font-semibold">{loadedFileName}</span>
+                      {stats && (
+                        <span className="text-gray-500 dark:text-gray-400 ml-2">
+                          — {stats.totalRecords} records · {stats.eoiCount ?? 0} EOIs · {stats.proposalCount ?? 0} Proposals
+                          {lastUpdated && (
+                            <> · loaded {new Date(lastUpdated).toLocaleTimeString()}</>
+                          )}
+                        </span>
                       )}
-                      {isConnected && (
-                        <Badge
-                          variant="secondary"
-                          className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-                        >
-                          Connected
-                        </Badge>
-                      )}
-                    </div>
-                    {dataStatusOpen ? (
-                      <ChevronUp className="h-4 w-4 text-gray-500" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 text-gray-500" />
-                    )}
-                  </CardTitle>
-                </CardHeader>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <CardContent className="pt-0">
-                  <DataStatus
-                    isConnected={isConnected}
-                    lastUpdated={lastUpdated}
-                    stats={stats}
-                    onRefresh={refreshData}
-                    loading={dataLoading}
-                    error={dataError}
-                  />
-                </CardContent>
-              </CollapsibleContent>
-            </Card>
-          </Collapsible>
+                    </span>
+                  ) : (
+                    <span className="text-gray-400 dark:text-gray-500">No file loaded</span>
+                  )}
+                </div>
+                <ExcelUpload
+                  onDataLoaded={handleUploadedData}
+                  onError={handleUploadError}
+                  compact={true}
+                  currentFileName={loadedFileName}
+                />
+              </CardTitle>
+            </CardHeader>
+          </Card>
         </div>
 
-        {!isConnected && !uploadedData && (
+        {!hasData && (
           <div className="mb-6">
             <ExcelUpload onDataLoaded={handleUploadedData} onError={handleUploadError} />
           </div>
@@ -2506,7 +2473,7 @@ export default function PowerBIDashboard() {
           </TabsContent>
 
           <TabsContent value="partners-map" className="space-y-4">
-            <PartnersMapComponent />
+            <PartnersMapComponent partners={partners} />
           </TabsContent>
         </Tabs>
       </div>

@@ -67,7 +67,7 @@ interface Partner {
   website?: string
 }
 
-export default function PartnersMapComponent() {
+export default function PartnersMapComponent({ partners: partnersProp = [] }: { partners?: any[] }) {
   const [activeTab, setActiveTab] = useState("map")
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedCountry, setSelectedCountry] = useState<string>("all")
@@ -81,45 +81,31 @@ export default function PartnersMapComponent() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Fetch partners data from new API on component mount
+  // Use partners passed in as a prop (from uploaded Excel)
   useEffect(() => {
-    const fetchPartnersData = async () => {
-      try {
-        setLoading(true)
-        setError(null)
-        const response = await fetch("/api/partners")
-        if (!response.ok) throw new Error("Failed to fetch partner data")
-        
-        const data = await response.json()
-        console.log("[Partners] Fetched data:", data.length, "partners")
-        
-        const partners: Partner[] = data.map((p: any) => ({
-          id: p.id,
-          name: p.name,
-          country: p.country || "",
-          sector: p.sector || "",
-          expertise: p.expertise || "",
-          type: p.type,
-          email: p.email || "",
-          phone: p.phone || "",
-          website: p.website || "",
-          contactPerson: p.contact_person || "",
-          designation: p.designation || "",
-        }))
-        
-        setAllPartners(partners)
-        console.log("[Partners] Parsed partners:", partners.length)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Unknown error"
-        console.error("[Partners] Error fetching data:", message)
-        setError(message)
-      } finally {
-        setLoading(false)
-      }
+    setLoading(true)
+    try {
+      const mapped: Partner[] = (partnersProp || []).map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        country: p.country || "",
+        sector: p.sector || "",
+        expertise: p.expertise || "",
+        type: p.type as "firm" | "individual",
+        email: p.email || "",
+        phone: p.phone || "",
+        website: p.website || "",
+        contactPerson: p.contact_person || "",
+        designation: p.designation || "",
+      }))
+      setAllPartners(mapped)
+      setError(null)
+    } catch (err) {
+      setError("Failed to read partners data")
+    } finally {
+      setLoading(false)
     }
-    
-    fetchPartnersData()
-  }, [])
+  }, [partnersProp])
 
   const handleRatePartner = (partner: any) => {
     setSelectedPartner(partner)
@@ -127,14 +113,14 @@ export default function PartnersMapComponent() {
   }
 
   const handleRatingSubmitted = () => {
-    console.log("[EED] Rating submitted, refreshing ratings...")
+    console.log("[v0] Rating submitted, refreshing ratings...")
     // Ratings feature not yet implemented - skip fetching
     // fetchPartnerRatings()
   }
 
   const fetchPartnerRatings = async () => {
     // Ratings feature not yet implemented
-    console.log("[EED] Partner ratings feature coming soon")
+    console.log("[v0] Partner ratings feature coming soon")
     return
   }
 
@@ -282,47 +268,23 @@ export default function PartnersMapComponent() {
     return (
       <div className="space-y-6">
         <Card className="border-[#6b7dd1]/20 dark:border-[#6b7dd1]/20 dark:bg-gray-800">
-          <CardHeader>
-            <CardTitle className="text-xl flex items-center gap-2">
-              <Users className="h-5 w-5 text-[#383e80]" />
-              Partners Network
-            </CardTitle>
-            <CardDescription>Loading partners data...</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[400px] flex items-center justify-center">
-              <div className="text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#383e80] mx-auto mb-4"></div>
-                <p className="text-gray-600 dark:text-gray-400">Loading partners data from Excel...</p>
-              </div>
-            </div>
+          <CardContent className="h-[200px] flex items-center justify-center">
+            <p className="text-gray-500">Loading partners…</p>
           </CardContent>
         </Card>
       </div>
     )
   }
 
-  if (error) {
+  if (!partnersProp || partnersProp.length === 0) {
     return (
       <div className="space-y-6">
-        <Card className="border-red-200 dark:border-red-800 dark:bg-gray-800">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-red-600 dark:text-red-400">
-              <Users className="h-5 w-5" />
-              Partners Network - Error
-            </CardTitle>
-            <CardDescription className="text-red-500 dark:text-red-400">Failed to load partners data</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-center py-8">
-              <div className="h-12 w-12 bg-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-white font-bold">!</span>
-              </div>
-              <p className="text-red-600 dark:text-red-400 mb-4">{error}</p>
-              <Button onClick={() => window.location.reload()} className="bg-[#383e80] hover:bg-[#383e80]/90">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Try Again
-              </Button>
+        <Card className="border-[#6b7dd1]/20 dark:border-[#6b7dd1]/20 dark:bg-gray-800">
+          <CardContent className="h-[200px] flex items-center justify-center text-center">
+            <div>
+              <Users className="h-10 w-10 mx-auto mb-3 text-gray-300" />
+              <p className="text-gray-500 font-medium">No partners data loaded</p>
+              <p className="text-sm text-gray-400 mt-1">Upload your Excel file to see partners from the <strong>Partners Firms</strong> and <strong>Partners Individual Experts</strong> sheets.</p>
             </div>
           </CardContent>
         </Card>
@@ -1071,41 +1033,7 @@ export default function PartnersMapComponent() {
         </TabsContent>
       </Tabs>
 
-      {/* Data Source Info */}
-      {stats && (
-        <Card className="border-[#6b7dd1]/20 dark:border-[#6b7dd1]/20 dark:bg-gray-800">
-          <CardHeader>
-            <CardTitle className="text-sm">Data Source Information</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <span className="font-medium">Source:</span>
-                <p className="text-gray-600 dark:text-gray-400 capitalize">{stats.source}</p>
-              </div>
-              <div>
-                <span className="font-medium">Total Records:</span>
-                <p className="text-gray-600 dark:text-gray-400">{stats.totalRecords}</p>
-              </div>
-              <div>
-                <span className="font-medium">Last Updated:</span>
-                <p className="text-gray-600 dark:text-gray-400">{new Date(stats.lastModified).toLocaleString()}</p>
-              </div>
-              <div>
-                <span className="font-medium">Status:</span>
-                <Badge variant={stats.source === "excel" ? "default" : "secondary"}>
-                  {stats.source === "excel" ? "Connected" : "Offline"}
-                </Badge>
-              </div>
-            </div>
-            {stats.errorDetails && (
-              <div className="mt-4 p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg">
-                <p className="text-sm text-orange-800 dark:text-orange-200">{stats.errorDetails}</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+
 
       <PartnerRatingDialog
         partner={selectedPartner}

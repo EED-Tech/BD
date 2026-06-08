@@ -2,18 +2,29 @@
 
 import type React from "react"
 import { useState, useCallback } from "react"
-import { Upload, FileSpreadsheet, X, CheckCircle, AlertCircle } from "lucide-react"
+import { Upload, FileSpreadsheet, X, CheckCircle, AlertCircle, RefreshCw } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
-interface ExcelUploadProps {
-  onDataLoaded: (data: any[]) => void
-  onError: (error: string) => void
+interface FileMeta {
+  name: string
+  size: number
+  sheets?: string[]
+  eoiCount?: number
+  proposalCount?: number
+  partnerCount?: number
 }
 
-export function ExcelUpload({ onDataLoaded, onError }: ExcelUploadProps) {
+interface ExcelUploadProps {
+  onDataLoaded: (data: any[], partners: any[], fileMeta: FileMeta) => void
+  onError: (error: string) => void
+  compact?: boolean
+  currentFileName?: string | null
+}
+
+export function ExcelUpload({ onDataLoaded, onError, compact = false, currentFileName }: ExcelUploadProps) {
   const [isDragOver, setIsDragOver] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -35,30 +46,28 @@ export function ExcelUpload({ onDataLoaded, onError }: ExcelUploadProps) {
     (e: React.DragEvent) => {
       e.preventDefault()
       setIsDragOver(false)
-
       const files = Array.from(e.dataTransfer.files)
       const excelFile = files.find(
         (file) =>
           file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
           file.type === "application/vnd.ms-excel" ||
           file.name.endsWith(".xlsx") ||
-          file.name.endsWith(".xls"),
+          file.name.endsWith(".xls")
       )
-
       if (excelFile) {
         handleFileUpload(excelFile)
       } else {
         onError("Please upload a valid Excel file (.xlsx or .xls)")
       }
     },
-    [onError],
+    [onError]
   )
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (file) {
-      handleFileUpload(file)
-    }
+    if (file) handleFileUpload(file)
+    // Reset input so the same file can be re-selected
+    e.target.value = ""
   }, [])
 
   const handleFileUpload = async (file: File) => {
@@ -68,13 +77,9 @@ export function ExcelUpload({ onDataLoaded, onError }: ExcelUploadProps) {
     setUploadStatus("idle")
 
     try {
-      // Simulate upload progress
       const progressInterval = setInterval(() => {
         setUploadProgress((prev) => {
-          if (prev >= 90) {
-            clearInterval(progressInterval)
-            return 90
-          }
+          if (prev >= 90) { clearInterval(progressInterval); return 90 }
           return prev + 10
         })
       }, 100)
@@ -90,16 +95,21 @@ export function ExcelUpload({ onDataLoaded, onError }: ExcelUploadProps) {
       clearInterval(progressInterval)
       setUploadProgress(100)
 
-      if (!response.ok) {
-        throw new Error(`Upload failed: ${response.statusText}`)
-      }
+      if (!response.ok) throw new Error(`Upload failed: ${response.statusText}`)
 
       const result = await response.json()
 
       if (result.success) {
         setUploadStatus("success")
-        setStatusMessage(`Successfully parsed ${result.data.length} records from Excel file`)
-        onDataLoaded(result.data)
+        setStatusMessage(`Loaded ${result.data.length} BD records + ${(result.partners || []).length} partners from "${file.name}"`)
+        onDataLoaded(result.data, result.partners || [], {
+          name: file.name,
+          size: file.size,
+          sheets: result.stats?.sheets,
+          eoiCount: result.stats?.eoiCount,
+          proposalCount: result.stats?.proposalCount,
+          partnerCount: result.stats?.partnerCount,
+        })
       } else {
         throw new Error(result.error || "Failed to parse Excel file")
       }
@@ -120,14 +130,53 @@ export function ExcelUpload({ onDataLoaded, onError }: ExcelUploadProps) {
     setUploadProgress(0)
   }
 
+  // Compact mode: just a "Replace file" button shown in the header area
+  if (compact) {
+    return (
+      <div className="flex items-center gap-2">
+        <input
+          type="file"
+          accept=".xlsx,.xls"
+          onChange={handleFileSelect}
+          className="hidden"
+          id="excel-upload-compact"
+        />
+        <label htmlFor="excel-upload-compact">
+          <Button
+            asChild
+            variant="outline"
+            size="sm"
+            className="border-[#6b7dd1] text-[#6b7dd1] hover:bg-[#6b7dd1]/10 cursor-pointer"
+            disabled={isUploading}
+          >
+            <span>
+              <RefreshCw className={`h-3 w-3 mr-1 ${isUploading ? "animate-spin" : ""}`} />
+              {isUploading ? "Loading…" : "Load new file"}
+            </span>
+          </Button>
+        </label>
+        {uploadStatus === "success" && (
+          <span className="text-xs text-green-600 dark:text-green-400">✓ Updated</span>
+        )}
+        {uploadStatus === "error" && (
+          <span className="text-xs text-red-500 truncate max-w-[200px]">{statusMessage}</span>
+        )}
+      </div>
+    )
+  }
+
+  // Full drop-zone mode (shown on first load when no data exists)
   return (
     <Card className="border-[#6b7dd1]/20 dark:border-[#6b7dd1]/20 dark:bg-gray-800">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <FileSpreadsheet className="h-5 w-5 text-[#383e80]" />
-          Upload Excel File
+          Load BD Tracker Excel File
         </CardTitle>
-        <CardDescription>Upload your BD Tracker Excel file to load data into the dashboard</CardDescription>
+        <CardDescription>
+          Download the latest Excel from SharePoint, then drop or browse it here. No database needed — data loads
+          directly from the file.
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {!uploadedFile ? (
@@ -144,7 +193,13 @@ export function ExcelUpload({ onDataLoaded, onError }: ExcelUploadProps) {
             <Upload className="h-12 w-12 mx-auto mb-4 text-gray-400" />
             <p className="text-lg font-medium mb-2">Drop your Excel file here, or click to browse</p>
             <p className="text-sm text-gray-500 mb-4">Supports .xlsx and .xls files</p>
-            <input type="file" accept=".xlsx,.xls" onChange={handleFileSelect} className="hidden" id="excel-upload" />
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleFileSelect}
+              className="hidden"
+              id="excel-upload"
+            />
             <Button asChild className="bg-[#383e80] hover:bg-[#383e80]/90">
               <label htmlFor="excel-upload" className="cursor-pointer">
                 Browse Files
@@ -169,7 +224,7 @@ export function ExcelUpload({ onDataLoaded, onError }: ExcelUploadProps) {
             {isUploading && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
-                  <span>Processing file...</span>
+                  <span>Processing file…</span>
                   <span>{uploadProgress}%</span>
                 </div>
                 <Progress value={uploadProgress} className="h-2" />
