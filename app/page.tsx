@@ -54,8 +54,6 @@ import { useLocalExcelData } from "@/hooks/use-local-excel-data"
 import { ExcelUpload } from "@/components/excel-upload"
 import PartnersMapComponent from "@/components/partners-map-component"
 import { ReportContent } from "@/components/report-content"
-import jsPDF from "jspdf"
-import html2canvas from "html2canvas"
 
 const teamMembersByGroup = {
   "Team Chi": ["TS", "DW", "CN", "MaK", "WM", "GJ", "MW"],
@@ -137,12 +135,16 @@ export default function PowerBIDashboard() {
     filterByType,
   } = useLocalExcelData()
 
+  const currentYear  = new Date().getFullYear().toString()
+  const currentMonth = new Date().getMonth() + 1
+  const currentQuarterDefault = currentMonth <= 3 ? "Q1" : currentMonth <= 6 ? "Q2" : currentMonth <= 9 ? "Q3" : "Q4"
+
   const [activeTab, setActiveTab] = useState("overview")
   const [dataTypeFilter, setDataTypeFilter] = useState<"all" | "EOI" | "Proposal">("all")
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [activeFilters, setActiveFilters] = useState({
-    quarter: "Q2",
-    year: "All Years",
+    quarter: currentQuarterDefault,
+    year: currentYear,
     bdCategory: "All",
     teamGroup: "All Teams",
     teamMembers: [],
@@ -201,6 +203,32 @@ export default function PowerBIDashboard() {
     const years = getAvailableYears()
     setAvailableYears(years)
   }, [getAvailableYears])
+
+  // Auto-load the default Excel from /public on first visit (if no session data)
+  useEffect(() => {
+    if (hasData) return // already loaded from sessionStorage or a previous upload
+    const load = async () => {
+      try {
+        const res = await fetch("/api/bd-data/default")
+        if (!res.ok) return // no default file present — user will upload manually
+        const result = await res.json()
+        if (result.success && result.data?.length) {
+          loadFromUpload(result.data, result.partners || [], {
+            name: result.stats.fileName,
+            size: result.stats.fileSize,
+            sheets: result.stats.sheets,
+            eoiCount: result.stats.eoiCount,
+            proposalCount: result.stats.proposalCount,
+            partnerCount: result.stats.partnerCount,
+          })
+        }
+      } catch {
+        // silently ignore — user can still upload manually
+      }
+    }
+    load()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const aggregateByField = (data, field) => {
     if (!data || !Array.isArray(data) || data.length === 0) {
@@ -368,8 +396,8 @@ export default function PowerBIDashboard() {
 
   const clearFilters = () => {
     setActiveFilters({
-      quarter: "All Quarters",
-      year: "All Years",
+      quarter: currentQuarterDefault,
+      year: currentYear,
       bdCategory: "All",
       teamGroup: "All Teams",
       teamMembers: [],
@@ -563,62 +591,45 @@ export default function PowerBIDashboard() {
     document.body.removeChild(link)
   }
 
-  const downloadPDF = async () => {
-    if (!reportRef.current) {
-      alert("Report content not available for download.")
-      return
-    }
-
-    const summaryData = {
-      totalOpportunities,
-      rfpCount,
-      eoiCount,
-      totalBudget: totalBudget > 0 ? `$${(totalBudget / 1000000).toFixed(1)}M` : "$0",
-      upcomingDeadlines,
-      countriesCount: filteredData.geoData?.length || 0,
-      businessLines: filteredData.businessLineData?.map((bl) => `${bl.name}: ${bl.value}`).join(", ") || "None",
-      topCountries:
-        filteredData.geoData
-          ?.slice(0, 5)
-          .map((geo) => `${geo.country}: ${geo.value}`)
-          .join(", ") || "None",
-      winRates:
-        filteredData.winRateData
-          ?.slice(0, 3)
-          .map((wr) => `${wr.name}: ${wr.winRate}%`)
-          .join(", ") || "None",
-    }
-
+  const downloadDocx = async () => {
     try {
-      const canvas = await html2canvas(reportRef.current, { scale: 2 })
-      const imgData = canvas.toDataURL("image/png")
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "pt",
-        format: "letter",
+      const response = await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          summaryData: {
+            totalOpportunities,
+            rfpCount,
+            eoiCount,
+            totalBudget: totalBudget > 0 ? `$${(totalBudget / 1000000).toFixed(1)}M` : "$0",
+            upcomingDeadlines,
+            countriesCount: filteredData.geoData?.length || 0,
+          },
+          activeFilters,
+          filteredData: {
+            rawData: filteredData.rawData || [],
+            businessLineData: filteredData.businessLineData || [],
+            clientTypeData: filteredData.clientTypeData || [],
+            bdTypeData: filteredData.bdTypeData || [],
+            geoData: filteredData.geoData || [],
+            statusData: filteredData.statusData || [],
+            winRateData: filteredData.winRateData || [],
+            originData: filteredData.originData || [],
+            serviceOfferingData: filteredData.serviceOfferingData || [],
+          },
+        }),
       })
-
-      const imgWidth = 612
-      const pageHeight = 792
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
-      let heightLeft = imgHeight
-      let position = 0
-
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight)
-      heightLeft -= pageHeight
-
-      while (heightLeft >= 0) {
-        position = heightLeft - imgHeight
-        pdf.addPage()
-        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight)
-        heightLeft -= pageHeight
-      }
-
-      const fileName = `BD_Dashboard_Report_${new Date().toISOString().split("T")[0]}.pdf`
-      pdf.save(fileName)
+      if (!response.ok) throw new Error("Report generation failed")
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `BD_Report_${activeFilters.year}_${activeFilters.quarter}_${new Date().toISOString().split("T")[0]}.docx`
+      link.click()
+      URL.revokeObjectURL(url)
     } catch (error) {
-      console.error("Error generating PDF:", error)
-      alert("Failed to generate PDF report. Please try again.")
+      console.error("Error generating report:", error)
+      alert("Failed to generate report. Please try again.")
     }
   }
 
@@ -930,7 +941,7 @@ export default function PowerBIDashboard() {
             <p className="text-red-600 dark:text-red-400 mb-4">Error reading file: {dataError}</p>
             <p className="text-gray-500 text-sm">Try uploading the Excel file again below.</p>
             <div className="mt-6">
-              <ExcelUpload onDataLoaded={handleUploadedData} onError={handleUploadError} />
+              <ExcelUpload onDataLoaded={handleUploadedData} onError={handleUploadError} compact={true} />
             </div>
           </div>
         </div>
@@ -1075,11 +1086,11 @@ export default function PowerBIDashboard() {
                     Download CSV
                   </div>
                   <div
-                    onClick={downloadPDF}
+                    onClick={downloadDocx}
                     className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800"
                   >
                     <FileText className="h-4 w-4" />
-                    Download Report (PDF)
+                    Download Report (.docx)
                   </div>
                 </SelectContent>
               </Select>
@@ -1090,45 +1101,33 @@ export default function PowerBIDashboard() {
         </div>
       </header>
 
-      <div className="flex-1 p-6">
-        <div className="mb-6">
-          <Card className="border-[#6b7dd1]/20 dark:border-[#6b7dd1]/20 dark:bg-gray-800">
-            <CardHeader className="py-3 px-4">
-              <CardTitle className="flex items-center justify-between text-sm font-medium">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-[#383e80]" />
-                  {hasData ? (
-                    <span className="text-gray-700 dark:text-gray-200">
-                      <span className="font-semibold">{loadedFileName}</span>
-                      {stats && (
-                        <span className="text-gray-500 dark:text-gray-400 ml-2">
-                          — {stats.totalRecords} records · {stats.eoiCount ?? 0} EOIs · {stats.proposalCount ?? 0} Proposals
-                          {lastUpdated && (
-                            <> · loaded {new Date(lastUpdated).toLocaleTimeString()}</>
-                          )}
-                        </span>
-                      )}
-                    </span>
-                  ) : (
-                    <span className="text-gray-400 dark:text-gray-500">No file loaded</span>
-                  )}
-                </div>
-                <ExcelUpload
-                  onDataLoaded={handleUploadedData}
-                  onError={handleUploadError}
-                  compact={true}
-                  currentFileName={loadedFileName}
-                />
-              </CardTitle>
-            </CardHeader>
-          </Card>
+      <div className="flex-1 p-4">
+        {/* ── File status bar ── */}
+        <div className="mb-4 flex items-center justify-between gap-4 px-3 py-2 rounded-lg border border-[#6b7dd1]/20 bg-white dark:bg-gray-800 text-sm">
+          <div className="flex items-center gap-2 min-w-0">
+            <FileText className="h-4 w-4 text-[#383e80] shrink-0" />
+            {hasData ? (
+              <span className="text-gray-700 dark:text-gray-200 truncate">
+                <span className="font-semibold">{loadedFileName}</span>
+                {stats && (
+                  <span className="text-gray-400 dark:text-gray-500 ml-2">
+                    {stats.totalRecords} records · {stats.eoiCount ?? 0} EOIs · {stats.proposalCount ?? 0} RFPs
+                    {lastUpdated && <> · {new Date(lastUpdated).toLocaleTimeString()}</>}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="text-gray-400 italic">No data — loading default file…</span>
+            )}
+          </div>
+          <ExcelUpload
+            onDataLoaded={handleUploadedData}
+            onError={handleUploadError}
+            compact={true}
+            currentFileName={loadedFileName}
+          />
         </div>
 
-        {!hasData && (
-          <div className="mb-6">
-            <ExcelUpload onDataLoaded={handleUploadedData} onError={handleUploadError} />
-          </div>
-        )}
 
         <div className="mb-6">
           <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
@@ -1285,7 +1284,7 @@ export default function PowerBIDashboard() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="All Teams">All Teams</SelectItem>
-                          {Object.keys(teamMembersByGroup).map((groupName) => (
+                          {Object.keys(teamMembersByGroup).sort((a, b) => a.localeCompare(b)).map((groupName) => (
                             <SelectItem key={groupName} value={groupName}>
                               {groupName}
                             </SelectItem>
@@ -1492,7 +1491,7 @@ export default function PowerBIDashboard() {
               <CardContent>
                 <div className="text-xs text-white/70 flex items-center">
                   <AlertCircle className="mr-1 h-3 w-3 text-red-300" />
-                  <span className="text-red-300 font-medium">{upcomingDeadlines}</span>   deadlines in the next 7 days
+                  <span className="text-red-300 font-medium">{upcomingDeadlines}</span> deadlines in the next 7 days
                 </div>
               </CardContent>
             </Card>
