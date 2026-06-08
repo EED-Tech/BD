@@ -95,12 +95,17 @@ export default function MapComponent({ geoData, isDarkMode = false }) {
             if (location.value > 0 && location.lat && location.lng) {
               // Create circle marker with size based on value
               const circleColor = isDarkMode ? "#4B518C" : "#383e80"
+              // Use sqrt scaling so large counts don't balloon out of proportion,
+              // then cap at 120 km so no bubble overwhelms neighbouring countries.
+              const maxValues = geoData.map((d) => d.value)
+              const maxVal = Math.max(...maxValues, 1)
+              const scaledRadius = Math.sqrt(location.value / maxVal) * 120000
               const circle = L.default
                 .circle([location.lat, location.lng], {
                   color: circleColor,
                   fillColor: circleColor,
                   fillOpacity: 0.6,
-                  radius: location.value * 30000, // Scale the radius based on value
+                  radius: scaledRadius,
                 })
                 .addTo(mapInstanceRef.current)
 

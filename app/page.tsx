@@ -1492,7 +1492,7 @@ export default function PowerBIDashboard() {
               <CardContent>
                 <div className="text-xs text-white/70 flex items-center">
                   <AlertCircle className="mr-1 h-3 w-3 text-red-300" />
-                  <span className="text-red-300 font-medium">{upcomingDeadlines}</span> deadlines in the next 7 days
+                  <span className="text-red-300 font-medium">{upcomingDeadlines}</span>   deadlines in the next 7 days
                 </div>
               </CardContent>
             </Card>

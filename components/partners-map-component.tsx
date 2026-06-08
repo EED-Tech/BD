@@ -22,7 +22,7 @@ import {
   ChevronUp,
 } from "lucide-react"
 import { StarRating } from "./star-rating"
-import { PartnerRatingDialog } from "./partner-rating-dialog"
+import { PartnerRatingDialog, loadRatings, getPartnerRatingSummary } from "./partner-rating-dialog"
 import dynamic from "next/dynamic"
 
 // Dynamically import the Leaflet map component
@@ -113,16 +113,37 @@ export default function PartnersMapComponent({ partners: partnersProp = [] }: { 
   }
 
   const handleRatingSubmitted = () => {
-    console.log("[v0] Rating submitted, refreshing ratings...")
-    // Ratings feature not yet implemented - skip fetching
-    // fetchPartnerRatings()
+    // Rebuild ratings map from localStorage after a new rating is saved
+    const all = loadRatings()
+    const map: Record<string, any> = {}
+    all.forEach((r) => {
+      const key = `${r.partner_name}_${r.partner_type}`
+      if (!map[key]) {
+        map[key] = { average_rating: 0, total_ratings: 0, recent_comments: [] }
+      }
+      map[key].recent_comments.push({
+        rating: r.rating,
+        comment: r.comment,
+        rated_by: r.rated_by,
+        created_at: r.created_at,
+      })
+      map[key].total_ratings += 1
+    })
+    // Calculate averages
+    Object.keys(map).forEach((key) => {
+      const comments = map[key].recent_comments
+      map[key].average_rating =
+        Math.round((comments.reduce((s: number, c: any) => s + c.rating, 0) / comments.length) * 10) / 10
+      map[key].recent_comments = comments.slice(-5).reverse()
+    })
+    setPartnerRatings(map)
   }
 
-  const fetchPartnerRatings = async () => {
-    // Ratings feature not yet implemented
-    console.log("[v0] Partner ratings feature coming soon")
-    return
-  }
+  // Load ratings from localStorage on mount
+  useEffect(() => {
+    handleRatingSubmitted()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Add toggleReviews function
   const toggleReviews = (partnerId: string) => {
