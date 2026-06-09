@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic"
 
 import { type NextRequest, NextResponse } from "next/server"
 
-const FILE_NAME = "BD Tracker_Live Document.xlsx"
+const FILE_NAME = "BD_Tracker_Live Document.xlsx"
 
 export async function GET(_request: NextRequest) {
   try {
