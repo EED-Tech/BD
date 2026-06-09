@@ -1,153 +1,124 @@
-/**
- * Serves the bundled default Excel file so the dashboard auto-loads
- * on first visit without requiring a manual upload.
- *
- * Fetches the file via HTTP (from /public) instead of fs.readFileSync
- * so it works regardless of what process.cwd() resolves to at runtime.
- */
+export const dynamic = "force-dynamic"
+
 import { type NextRequest, NextResponse } from "next/server"
 
-const FILE_NAME = "BD_Tracker_Live Document.xlsx"
+const FILE_NAME = "BD Tracker_Live Document.xlsx"
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
-    // Derive the base URL from the incoming request — works in dev and production
-    const { origin } = new URL(request.url)
-    const fileUrl = `${origin}/${encodeURIComponent(FILE_NAME)}`
+    // Dynamic imports keep fs/path/xlsx out of the browser bundle
+    const [{ default: fs }, { default: path }, XLSX] = await Promise.all([
+      import("fs"),
+      import("path"),
+      import("xlsx"),
+    ])
 
-    const fileRes = await fetch(fileUrl)
-    if (!fileRes.ok) {
+    // process.cwd() is the project root in both dev and Netlify production
+    const filePath = path.join(process.cwd(), "public", FILE_NAME)
+
+    if (!fs.existsSync(filePath)) {
       return NextResponse.json(
-        { success: false, error: `Default file not found (${fileRes.status}). Place "${FILE_NAME}" in /public.` },
+        { success: false, error: `File not found at ${filePath}` },
         { status: 404 }
       )
     }
 
-    const arrayBuffer = await fileRes.arrayBuffer()
-
-    // Dynamic import keeps xlsx out of the browser bundle
-    const XLSX = await import("xlsx")
-    const workbook  = XLSX.read(arrayBuffer, { type: "array", cellDates: true })
+    const buffer   = fs.readFileSync(filePath)
+    const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true })
     const sheetNames = workbook.SheetNames
 
-    // ── helpers ──────────────────────────────────────────────────────────────
     function sheetToRows(ws: any): any[][] {
       return XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false }) as any[][]
     }
-    function buildColumnMap(headers: any[]): Record<string, number> {
+    function buildColMap(headers: any[]): Record<string, number> {
       const map: Record<string, number> = {}
       headers.forEach((h, i) => {
-        if (!h) return
-        map[h.toString().toLowerCase().trim().replace(/\s+/g, " ")] = i
+        if (h) map[h.toString().toLowerCase().trim().replace(/\s+/g, " ")] = i
       })
       return map
     }
-    function str(v: any): string { return v == null ? "" : v.toString().trim() }
-    function num(v: any): number {
+    const str = (v: any) => (v == null ? "" : v.toString().trim())
+    const num = (v: any) => {
       if (typeof v === "number") return v
-      if (typeof v === "string") { const n = parseFloat(v.replace(/[,$\s]/g, "")); return isNaN(n) ? 0 : n }
-      return 0
+      const n = parseFloat(String(v).replace(/[,$\s]/g, ""))
+      return isNaN(n) ? 0 : n
     }
 
-    // ── BD rows (EOIs + Proposals) ───────────────────────────────────────────
-    function parseBDRows(rawData: any[][], bdType: "EOI" | "RFP"): any[] {
+    function parseBDRows(rawData: any[][], bdType: "EOI" | "RFP") {
       if (!rawData || rawData.length < 2) return []
-      let headerIdx = 0
+      let hi = 0
       for (let i = 0; i < Math.min(5, rawData.length); i++) {
-        const joined = rawData[i].join(" ").toLowerCase()
-        if (joined.includes("serial number") || joined.includes("project title")) { headerIdx = i; break }
+        if (rawData[i].join(" ").toLowerCase().includes("project title")) { hi = i; break }
       }
-      const colMap = buildColumnMap(rawData[headerIdx])
-      const get = (row: any[], key: string) => { const idx = colMap[key]; return idx !== undefined ? row[idx] ?? "" : "" }
-      return rawData.slice(headerIdx + 1)
+      const cm = buildColMap(rawData[hi])
+      const g = (row: any[], key: string) => { const idx = cm[key]; return idx !== undefined ? row[idx] ?? "" : "" }
+      return rawData.slice(hi + 1)
         .filter(row => row?.some((c: any) => c?.toString().trim()))
         .map((row, ri) => {
-          const title = str(get(row, "project title")), org = str(get(row, "name of organization"))
+          const title = str(g(row, "project title")), org = str(g(row, "name of organization"))
           if (!title && !org) return null
           return {
             id: `${bdType}_${ri}_${Math.random().toString(36).substr(2, 6)}`,
-            bd: bdType, serialNumber: num(get(row, "serial number")) || ri + 1,
-            year: str(get(row, "year")), quarter: str(get(row, "quarter")),
-            client: str(get(row, "type of client")), organization: org, title,
-            businessLine: str(get(row, "business line")), serviceOffering: str(get(row, "service offering")),
-            typeBD: str(get(row, "type of bd")), country: str(get(row, "country covered")),
-            origin: str(get(row, "origin of bd")), deadline: str(get(row, "external deadline")),
-            cvsProfiles: str(get(row, "cvs & project profiles")), workplanBudget: str(get(row, "workplan & budget")),
-            methodology: str(get(row, "methodology")), otherActivity: str(get(row, "other activity")),
-            partners: str(get(row, "partners")), pc: str(get(row, "pc")), pd: str(get(row, "pd")),
-            budget: num(get(row, "budget (us$)")),
-            status: str(get(row, "status")) || str(get(row, "won")),
-            timeframe: str(get(row, "timeframe (months)")),
+            bd: bdType, serialNumber: num(g(row, "serial number")) || ri + 1,
+            year: str(g(row, "year")), quarter: str(g(row, "quarter")),
+            client: str(g(row, "type of client")), organization: org, title,
+            businessLine: str(g(row, "business line")), serviceOffering: str(g(row, "service offering")),
+            typeBD: str(g(row, "type of bd")), country: str(g(row, "country covered")),
+            origin: str(g(row, "origin of bd")), deadline: str(g(row, "external deadline")),
+            cvsProfiles: str(g(row, "cvs & project profiles")), workplanBudget: str(g(row, "workplan & budget")),
+            methodology: str(g(row, "methodology")), otherActivity: str(g(row, "other activity")),
+            partners: str(g(row, "partners")), pc: str(g(row, "pc")), pd: str(g(row, "pd")),
+            budget: num(g(row, "budget (us$)")),
+            status: str(g(row, "status")) || str(g(row, "won")),
+            timeframe: str(g(row, "timeframe (months)")),
             created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
           }
         }).filter(Boolean)
     }
 
-    // ── Partners ─────────────────────────────────────────────────────────────
-    function parseFirmRows(rawData: any[][]): any[] {
+    function parseFirmRows(rawData: any[][]) {
       if (!rawData || rawData.length < 2) return []
-      let headerIdx = 0
+      let hi = 0
       for (let i = 0; i < Math.min(5, rawData.length); i++) {
-        const joined = rawData[i].join(" ").toLowerCase()
-        if (joined.includes("name of firm") || joined.includes("country hq")) { headerIdx = i; break }
+        if (rawData[i].join(" ").toLowerCase().match(/name of firm|country hq/)) { hi = i; break }
       }
-      const colMap = buildColumnMap(rawData[headerIdx])
-      const get = (row: any[], key: string) => { const idx = colMap[key]; return idx !== undefined ? row[idx] ?? "" : "" }
-      return rawData.slice(headerIdx + 1)
-        .filter(row => row?.some((c: any) => c?.toString().trim()))
-        .map((row, ri) => {
-          const name = str(get(row, "name of firm")); if (!name) return null
-          return {
-            id: `firm_${ri}`, type: "firm", name,
-            country: str(get(row, "country hq")), email: str(get(row, "email")),
-            phone: str(get(row, "phone")), website: str(get(row, "website")),
-            contact_person: str(get(row, "name of contact person")),
-            designation: str(get(row, "designation")),
-            workedWithBefore: str(get(row, "have we worked with them in the past (yes/no)")),
-            sector: "", expertise: "",
-          }
-        }).filter(Boolean)
+      const cm = buildColMap(rawData[hi])
+      const g = (row: any[], key: string) => { const idx = cm[key]; return idx !== undefined ? row[idx] ?? "" : "" }
+      return rawData.slice(hi + 1).filter(row => row?.some((c: any) => c?.toString().trim())).map((row, ri) => {
+        const name = str(g(row, "name of firm")); if (!name) return null
+        return { id: `firm_${ri}`, type: "firm", name, country: str(g(row, "country hq")), email: str(g(row, "email")), phone: str(g(row, "phone")), website: str(g(row, "website")), contact_person: str(g(row, "name of contact person")), designation: str(g(row, "designation")), workedWithBefore: str(g(row, "have we worked with them in the past (yes/no)")), sector: "", expertise: "" }
+      }).filter(Boolean)
     }
 
-    function parseExpertRows(rawData: any[][]): any[] {
+    function parseExpertRows(rawData: any[][]) {
       if (!rawData || rawData.length < 2) return []
-      let headerIdx = 0
+      let hi = 0
       for (let i = 0; i < Math.min(5, rawData.length); i++) {
-        const joined = rawData[i].join(" ").toLowerCase()
-        if (joined.includes("name of expert") || joined.includes("expertise")) { headerIdx = i; break }
+        if (rawData[i].join(" ").toLowerCase().match(/name of expert|expertise/)) { hi = i; break }
       }
-      const colMap = buildColumnMap(rawData[headerIdx])
-      const get = (row: any[], key: string) => { const idx = colMap[key]; return idx !== undefined ? row[idx] ?? "" : "" }
-      return rawData.slice(headerIdx + 1)
-        .filter(row => row?.some((c: any) => c?.toString().trim()))
-        .map((row, ri) => {
-          const name = str(get(row, "name of expert")); if (!name) return null
-          return {
-            id: `expert_${ri}`, type: "individual", name,
-            expertise: str(get(row, "expertise")), sector: str(get(row, "sector")),
-            country: str(get(row, "country")), email: str(get(row, "email")),
-            phone: str(get(row, "phone number")),
-            workedWithBefore: str(get(row, "have we worked with this expert before? (yes/no)")),
-            dailyRate: str(get(row, "daily rate")),
-          }
-        }).filter(Boolean)
+      const cm = buildColMap(rawData[hi])
+      const g = (row: any[], key: string) => { const idx = cm[key]; return idx !== undefined ? row[idx] ?? "" : "" }
+      return rawData.slice(hi + 1).filter(row => row?.some((c: any) => c?.toString().trim())).map((row, ri) => {
+        const name = str(g(row, "name of expert")); if (!name) return null
+        return { id: `expert_${ri}`, type: "individual", name, expertise: str(g(row, "expertise")), sector: str(g(row, "sector")), country: str(g(row, "country")), email: str(g(row, "email")), phone: str(g(row, "phone number")), workedWithBefore: str(g(row, "have we worked with this expert before? (yes/no)")), dailyRate: str(g(row, "daily rate")) }
+      }).filter(Boolean)
     }
 
-    // ── Parse all sheets ──────────────────────────────────────────────────────
-    const eoiSheet    = sheetNames.find((n) => /eoi/i.test(n))
-    const propSheet   = sheetNames.find((n) => /proposal/i.test(n))
-    const firmSheet   = sheetNames.find((n) => /firm/i.test(n))
-    const expertSheet = sheetNames.find((n) => /individual|expert/i.test(n))
+    const eoiSheet    = sheetNames.find(n => /eoi/i.test(n))
+    const propSheet   = sheetNames.find(n => /proposal/i.test(n))
+    const firmSheet   = sheetNames.find(n => /firm/i.test(n))
+    const expertSheet = sheetNames.find(n => /individual|expert/i.test(n))
 
     const bdRecords = [
       ...parseBDRows(eoiSheet  ? sheetToRows(workbook.Sheets[eoiSheet])  : [], "EOI"),
       ...parseBDRows(propSheet ? sheetToRows(workbook.Sheets[propSheet]) : [], "RFP"),
     ]
     const partnerRecords = [
-      ...parseFirmRows(firmSheet      ? sheetToRows(workbook.Sheets[firmSheet])    : []),
-      ...parseExpertRows(expertSheet  ? sheetToRows(workbook.Sheets[expertSheet])  : []),
+      ...parseFirmRows(firmSheet     ? sheetToRows(workbook.Sheets[firmSheet])    : []),
+      ...parseExpertRows(expertSheet ? sheetToRows(workbook.Sheets[expertSheet])  : []),
     ]
 
+    const stats = fs.statSync(filePath)
     return NextResponse.json({
       success: true,
       data: bdRecords,
@@ -158,8 +129,8 @@ export async function GET(request: NextRequest) {
         eoiCount:      bdRecords.filter((r: any) => r.bd === "EOI").length,
         proposalCount: bdRecords.filter((r: any) => r.bd === "RFP").length,
         partnerCount:  partnerRecords.length,
-        lastModified:  new Date().toISOString(),
-        fileSize:      arrayBuffer.byteLength,
+        lastModified:  stats.mtime.toISOString(),
+        fileSize:      stats.size,
         sheets:        sheetNames,
         fileName:      FILE_NAME,
       },
