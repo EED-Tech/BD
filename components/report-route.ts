@@ -1,3 +1,5 @@
+"use server"
+
 import { type NextRequest, NextResponse } from "next/server"
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
@@ -272,7 +274,7 @@ export async function POST(request: NextRequest) {
     const buffer = await Packer.toBuffer(doc)
     const fileName = `BD_Report_${activeFilters.year}_${activeFilters.quarter}_${new Date().toISOString().split("T")[0]}.docx`
 
-    return new NextResponse(buffer, {
+    return new NextResponse(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }), {
       status: 200,
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

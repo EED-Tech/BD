@@ -396,8 +396,8 @@ export default function PowerBIDashboard() {
 
   const clearFilters = () => {
     setActiveFilters({
-      quarter: currentQuarterDefault,
-      year: currentYear,
+      quarter: "All Quarters",
+      year: "All Years",
       bdCategory: "All",
       teamGroup: "All Teams",
       teamMembers: [],
@@ -591,7 +591,7 @@ export default function PowerBIDashboard() {
     document.body.removeChild(link)
   }
 
-  const downloadDocx = async () => {
+  const downloadPdf = async () => {
     try {
       const response = await fetch("/api/report", {
         method: "POST",
@@ -624,7 +624,7 @@ export default function PowerBIDashboard() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement("a")
       link.href = url
-      link.download = `BD_Report_${activeFilters.year}_${activeFilters.quarter}_${new Date().toISOString().split("T")[0]}.docx`
+      link.download = `BD_Report_${activeFilters.year}_${activeFilters.quarter}_${new Date().toISOString().split("T")[0]}.pdf`
       link.click()
       URL.revokeObjectURL(url)
     } catch (error) {
@@ -1086,11 +1086,11 @@ export default function PowerBIDashboard() {
                     Download CSV
                   </div>
                   <div
-                    onClick={downloadDocx}
+                    onClick={downloadPdf}
                     className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800"
                   >
                     <FileText className="h-4 w-4" />
-                    Download Report (.docx)
+                    Download Report (.pdf)
                   </div>
                 </SelectContent>
               </Select>
@@ -1582,12 +1582,23 @@ export default function PowerBIDashboard() {
                             data={filteredData.businessLineData}
                             cx="50%"
                             cy="50%"
-                            labelLine={false}
-                            outerRadius={80}
+                            labelLine={true}
+                            outerRadius={75}
                             fill="#8884d8"
                             dataKey="value"
-                            label={({ name, percentage }) => `${name}: ${percentage}%`}
-                            style={{ fontSize: "10px" }}
+                            label={({ name, percentage, cx, cy, midAngle, outerRadius: or, index }) => {
+                              const pct = parseFloat(percentage)
+                              if (pct < 5) return null
+                              const RADIAN = Math.PI / 180
+                              const radius = or + 18
+                              const x = cx + radius * Math.cos(-midAngle * RADIAN)
+                              const y = cy + radius * Math.sin(-midAngle * RADIAN)
+                              return (
+                                <text x={x} y={y} textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" style={{ fontSize: "9px", fill: "#444" }}>
+                                  {`${name}: ${pct}%`}
+                                </text>
+                              )
+                            }}
                           >
                             {filteredData.businessLineData.map((entry, index) => (
                               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -1674,12 +1685,23 @@ export default function PowerBIDashboard() {
                             data={filteredData.bdTypeData}
                             cx="50%"
                             cy="50%"
-                            labelLine={false}
-                            outerRadius={80}
+                            labelLine={true}
+                            outerRadius={75}
                             fill="#8884d8"
                             dataKey="value"
-                            label={({ name, percentage }) => `${name}: ${percentage}%`}
-                            style={{ fontSize: "10px" }}
+                            label={({ name, percentage, cx, cy, midAngle, outerRadius: or, index }) => {
+                              const pct = parseFloat(percentage)
+                              if (pct < 5) return null
+                              const RADIAN = Math.PI / 180
+                              const radius = or + 18
+                              const x = cx + radius * Math.cos(-midAngle * RADIAN)
+                              const y = cy + radius * Math.sin(-midAngle * RADIAN)
+                              return (
+                                <text x={x} y={y} textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" style={{ fontSize: "9px", fill: "#444" }}>
+                                  {`${name}: ${pct}%`}
+                                </text>
+                              )
+                            }}
                           >
                             {filteredData.bdTypeData.map((entry, index) => (
                               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -1756,12 +1778,23 @@ export default function PowerBIDashboard() {
                             data={filteredData.originData}
                             cx="50%"
                             cy="50%"
-                            labelLine={false}
-                            outerRadius={80}
+                            labelLine={true}
+                            outerRadius={75}
                             fill="#8884d8"
                             dataKey="value"
-                            label={({ name, percentage }) => `${name}: ${percentage}%`}
-                            style={{ fontSize: "10px" }}
+                            label={({ name, percentage, cx, cy, midAngle, outerRadius: or, index }) => {
+                              const pct = parseFloat(percentage)
+                              if (pct < 5) return null
+                              const RADIAN = Math.PI / 180
+                              const radius = or + 18
+                              const x = cx + radius * Math.cos(-midAngle * RADIAN)
+                              const y = cy + radius * Math.sin(-midAngle * RADIAN)
+                              return (
+                                <text x={x} y={y} textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" style={{ fontSize: "9px", fill: "#444" }}>
+                                  {`${name}: ${pct}%`}
+                                </text>
+                              )
+                            }}
                           >
                             {filteredData.originData.map((entry, index) => (
                               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -1799,12 +1832,23 @@ export default function PowerBIDashboard() {
                             data={filteredData.serviceOfferingData}
                             cx="50%"
                             cy="50%"
-                            labelLine={false}
-                            outerRadius={80}
+                            labelLine={true}
+                            outerRadius={75}
                             fill="#8884d8"
                             dataKey="value"
-                            label={({ name, percentage }) => `${name}: ${percentage}%`}
-                            style={{ fontSize: "10px" }}
+                            label={({ name, percentage, cx, cy, midAngle, outerRadius: or, index }) => {
+                              const pct = parseFloat(percentage)
+                              if (pct < 5) return null
+                              const RADIAN = Math.PI / 180
+                              const radius = or + 18
+                              const x = cx + radius * Math.cos(-midAngle * RADIAN)
+                              const y = cy + radius * Math.sin(-midAngle * RADIAN)
+                              return (
+                                <text x={x} y={y} textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" style={{ fontSize: "9px", fill: "#444" }}>
+                                  {`${name}: ${pct}%`}
+                                </text>
+                              )
+                            }}
                           >
                             {filteredData.serviceOfferingData.map((entry, index) => (
                               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -1873,12 +1917,23 @@ export default function PowerBIDashboard() {
                             data={filteredData.statusData}
                             cx="50%"
                             cy="50%"
-                            labelLine={false}
-                            outerRadius={80}
+                            labelLine={true}
+                            outerRadius={75}
                             fill="#8884d8"
                             dataKey="value"
-                            label={({ name, percentage }) => `${name}: ${percentage}%`}
-                            style={{ fontSize: "10px" }}
+                            label={({ name, percentage, cx, cy, midAngle, outerRadius: or, index }) => {
+                              const pct = parseFloat(percentage)
+                              if (pct < 5) return null
+                              const RADIAN = Math.PI / 180
+                              const radius = or + 18
+                              const x = cx + radius * Math.cos(-midAngle * RADIAN)
+                              const y = cy + radius * Math.sin(-midAngle * RADIAN)
+                              return (
+                                <text x={x} y={y} textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" style={{ fontSize: "9px", fill: "#444" }}>
+                                  {`${name}: ${pct}%`}
+                                </text>
+                              )
+                            }}
                           >
                             {filteredData.statusData.map((entry, index) => (
                               <Cell
@@ -2402,12 +2457,23 @@ export default function PowerBIDashboard() {
                             })()}
                             cx="50%"
                             cy="50%"
-                            labelLine={false}
-                            outerRadius={80}
+                            labelLine={true}
+                            outerRadius={75}
                             fill="#8884d8"
                             dataKey="value"
-                            label={({ name, percentage }) => `${name}: ${percentage}%`}
-                            style={{ fontSize: "10px" }}
+                            label={({ name, percentage, cx, cy, midAngle, outerRadius: or, index }) => {
+                              const pct = parseFloat(percentage)
+                              if (pct < 5) return null
+                              const RADIAN = Math.PI / 180
+                              const radius = or + 18
+                              const x = cx + radius * Math.cos(-midAngle * RADIAN)
+                              const y = cy + radius * Math.sin(-midAngle * RADIAN)
+                              return (
+                                <text x={x} y={y} textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" style={{ fontSize: "9px", fill: "#444" }}>
+                                  {`${name}: ${pct}%`}
+                                </text>
+                              )
+                            }}
                           >
                             {(() => {
                               const regionMapping = {

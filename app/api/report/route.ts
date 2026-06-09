@@ -1,289 +1,346 @@
 import { type NextRequest, NextResponse } from "next/server"
-import {
-  Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-  AlignmentType, HeadingLevel, BorderStyle, WidthType, ShadingType,
-  PageNumber, Footer, PageBreak, LevelFormat
-} from "docx"
 
-const BRAND  = "383E80"
-const BRAND2 = "4B518C"
-const LIGHT  = "EEF0FA"
-const W = 9360 // content width DXA (US Letter, 0.75in margins)
-
-const BORDER     = { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" }
-const BORDERS    = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER }
-const NO_BORDER  = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" }
-const NO_BORDERS = { top: NO_BORDER, bottom: NO_BORDER, left: NO_BORDER, right: NO_BORDER }
-
-function spacer(pt = 6) {
-  return new Paragraph({ spacing: { before: 0, after: pt * 20 }, children: [new TextRun("")] })
-}
-
-function heading1(text: string) {
-  return new Paragraph({
-    heading: HeadingLevel.HEADING_1,
-    spacing: { before: 320, after: 160 },
-    border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: BRAND, space: 4 } },
-    children: [new TextRun({ text, bold: true, size: 28, color: BRAND, font: "Arial" })]
-  })
-}
-
-function heading2(text: string) {
-  return new Paragraph({
-    heading: HeadingLevel.HEADING_2,
-    spacing: { before: 200, after: 120 },
-    children: [new TextRun({ text, bold: true, size: 22, color: BRAND2, font: "Arial" })]
-  })
-}
-
-function kpiTable(items: {label: string, value: string, sub?: string}[]) {
-  const cols = Math.min(items.length, 3)
-  const colW = Math.floor(W / cols)
-  const rows = []
-  for (let i = 0; i < items.length; i += cols) {
-    const chunk = items.slice(i, i + cols)
-    while (chunk.length < cols) chunk.push(null as any)
-    rows.push(new TableRow({
-      children: chunk.map(item => new TableCell({
-        borders: BORDERS,
-        width: { size: colW, type: WidthType.DXA },
-        shading: { fill: item ? LIGHT : "FFFFFF", type: ShadingType.CLEAR },
-        margins: { top: 120, bottom: 120, left: 160, right: 160 },
-        children: item ? [
-          new Paragraph({ children: [new TextRun({ text: item.label, size: 16, color: "666666", font: "Arial" })] }),
-          new Paragraph({ children: [new TextRun({ text: item.value, size: 32, bold: true, color: BRAND, font: "Arial" })] }),
-          ...(item.sub ? [new Paragraph({ children: [new TextRun({ text: item.sub, size: 16, color: "888888", font: "Arial" })] })] : [])
-        ] : [new Paragraph({ children: [] })]
-      }))
-    }))
-  }
-  return new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: Array(cols).fill(colW), rows })
-}
-
-function dataTable(headers: string[], rows: string[][], colWidths: number[]) {
-  const total = colWidths.reduce((a, b) => a + b, 0)
-  return new Table({
-    width: { size: total, type: WidthType.DXA },
-    columnWidths: colWidths,
-    rows: [
-      new TableRow({
-        tableHeader: true,
-        children: headers.map((h, i) => new TableCell({
-          borders: BORDERS,
-          width: { size: colWidths[i], type: WidthType.DXA },
-          shading: { fill: BRAND, type: ShadingType.CLEAR },
-          margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, color: "FFFFFF", size: 18, font: "Arial" })] })]
-        }))
-      }),
-      ...rows.map((row, ri) => new TableRow({
-        children: row.map((cell, i) => new TableCell({
-          borders: BORDERS,
-          width: { size: colWidths[i], type: WidthType.DXA },
-          shading: { fill: ri % 2 === 0 ? "FFFFFF" : LIGHT, type: ShadingType.CLEAR },
-          margins: { top: 60, bottom: 60, left: 120, right: 120 },
-          children: [new Paragraph({ children: [new TextRun({ text: String(cell ?? ""), size: 18, font: "Arial" })] })]
-        }))
-      }))
-    ]
-  })
-}
-
-function barRows(items: any[]) {
-  return items.slice(0, 12).map(item => {
-    const maxVal = Math.max(...items.map((i: any) => i.value), 1)
-    const filled = Math.round((item.value / maxVal) * 25)
-    const bar = "█".repeat(filled) + "░".repeat(25 - filled)
-    const label = (item.name || item.country || "").padEnd(20).slice(0, 20)
-    return new Paragraph({
-      spacing: { before: 40, after: 40 },
-      children: [
-        new TextRun({ text: label + "  ", font: "Courier New", size: 16 }),
-        new TextRun({ text: bar + "  ", font: "Courier New", size: 16, color: BRAND }),
-        new TextRun({ text: String(item.value), size: 18, bold: true, color: BRAND, font: "Arial" }),
-      ]
-    })
-  })
-}
+// ── Brand colours ────────────────────────────────────────────────────────────
+const BRAND  : [number,number,number] = [56,  62,  128]   // #383E80
+const BRAND2 : [number,number,number] = [75,  81,  140]   // #4B518C
+const LIGHT  : [number,number,number] = [238, 240, 250]   // #EEF0FA
+const GRAY   : [number,number,number] = [110, 110, 110]
+const WHITE  : [number,number,number] = [255, 255, 255]
+const DKGRAY : [number,number,number] = [40,  40,  40]
+const ROWALT : [number,number,number] = [247, 248, 252]
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { summaryData, activeFilters, filteredData } = body
 
-    const filterText = [
-      `Year: ${activeFilters.year}`,
-      `Quarter: ${activeFilters.quarter}`,
-      `BD Type: ${activeFilters.bdCategory}`,
-      `Status: ${activeFilters.status}`,
-      `Country: ${activeFilters.country}`,
-    ].join("   |   ")
+    const rawData     : any[] = (filteredData.rawData          || []).slice(0, 80)
+    const blData      : any[] = (filteredData.businessLineData || []).sort((a:any,b:any)=>b.value-a.value)
+    const geoData     : any[] = (filteredData.geoData          || []).sort((a:any,b:any)=>b.value-a.value).slice(0,15)
+    const statusData  : any[] = filteredData.statusData        || []
+    const winRateData : any[] = (filteredData.winRateData      || []).slice(0,12)
+    const originData  : any[] = (filteredData.originData       || []).sort((a:any,b:any)=>b.value-a.value)
+    const clientData  : any[] = (filteredData.clientTypeData   || []).sort((a:any,b:any)=>b.value-a.value)
 
-    const rawData: any[] = (filteredData.rawData || []).slice(0, 60)
-    const blData: any[]  = (filteredData.businessLineData || []).sort((a: any, b: any) => b.value - a.value)
-    const geoData: any[] = (filteredData.geoData || []).sort((a: any, b: any) => b.value - a.value).slice(0, 15)
-    const statusData: any[] = filteredData.statusData || []
-    const winRateData: any[] = (filteredData.winRateData || []).slice(0, 12)
-    const originData: any[] = (filteredData.originData || []).sort((a: any, b: any) => b.value - a.value)
-    const clientData: any[] = (filteredData.clientTypeData || []).sort((a: any, b: any) => b.value - a.value)
+    const { jsPDF } = await import("jspdf")
+    const doc = new jsPDF({ orientation:"portrait", unit:"pt", format:"a4" })
 
-    const doc = new Document({
-      styles: {
-        default: { document: { run: { font: "Arial", size: 20 } } },
-        paragraphStyles: [
-          { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
-            run: { size: 28, bold: true, font: "Arial", color: BRAND },
-            paragraph: { spacing: { before: 320, after: 160 }, outlineLevel: 0 } },
-          { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
-            run: { size: 22, bold: true, font: "Arial", color: BRAND2 },
-            paragraph: { spacing: { before: 200, after: 120 }, outlineLevel: 1 } },
-        ]
-      },
-      sections: [{
-        properties: {
-          page: {
-            size: { width: 12240, height: 15840 },
-            margin: { top: 1080, right: 1080, bottom: 1080, left: 1080 }
-          }
-        },
-        footers: {
-          default: new Footer({
-            children: [new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [
-                new TextRun({ text: "FSD Africa BD Dashboard  |  Page ", size: 16, color: "888888" }),
-                new TextRun({ children: [PageNumber.CURRENT], size: 16, color: "888888" }),
-                new TextRun({ text: " of ", size: 16, color: "888888" }),
-                new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 16, color: "888888" }),
-              ]
-            })]
-          })
-        },
-        children: [
-          // ── Title ─────────────────────────────────────────────────────────
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 480, after: 120 },
-            children: [new TextRun({ text: "Business Development Dashboard", bold: true, size: 52, color: BRAND, font: "Arial" })]
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 0, after: 80 },
-            children: [new TextRun({ text: "FSD Africa  |  Programme Countries", size: 24, color: BRAND2, font: "Arial" })]
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 0, after: 600 },
-            children: [new TextRun({
-              text: `Generated: ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}   |   ${filterText}`,
-              size: 18, color: "888888", font: "Arial"
-            })]
-          }),
+    const PW = doc.internal.pageSize.getWidth()   // 595.28
+    const PH = doc.internal.pageSize.getHeight()  // 841.89
+    const ML = 36, MR = 36
+    const CONTENT_W = PW - ML - MR
+    const FOOTER_H  = 28
+    const MARGIN_B  = FOOTER_H + 16   // keep above footer
+    let y = 36
 
-          // ── KPIs ──────────────────────────────────────────────────────────
-          heading1("Summary Metrics"),
-          kpiTable([
-            { label: "Total Opportunities", value: String(summaryData.totalOpportunities), sub: `${activeFilters.year} · ${activeFilters.quarter}` },
-            { label: "RFP / EOI", value: `${summaryData.rfpCount} / ${summaryData.eoiCount}` },
-            { label: "Total Budget Value", value: summaryData.totalBudget },
-            { label: "Countries Covered", value: String(summaryData.countriesCount) },
-            { label: "Upcoming Deadlines", value: String(summaryData.upcomingDeadlines), sub: "next 7 days" },
-          ]),
-          spacer(16),
+    // ── low-level helpers ─────────────────────────────────────────────────────
+    const sf  = (style:"normal"|"bold", size:number, color=DKGRAY) => {
+      doc.setFont("helvetica", style)
+      doc.setFontSize(size)
+      doc.setTextColor(...color)
+    }
 
-          // ── Business Lines ────────────────────────────────────────────────
-          heading1("Business Line Distribution"),
-          ...barRows(blData),
-          spacer(8),
-          ...(blData.length ? [dataTable(
-            ["Business Line", "Count", "% Share"],
-            blData.map(b => [b.name, String(b.value), b.percentage ? `${b.percentage}%` : ""]),
-            [5040, 2160, 2160]
-          )] : []),
-          spacer(16),
+    /** Ensure there's `need` pts before the bottom margin; add page if not. */
+    const ensure = (need:number) => {
+      if (y + need > PH - MARGIN_B) { newPage() }
+    }
 
-          // ── Client Types ──────────────────────────────────────────────────
-          ...(clientData.length ? [
-            heading1("Client Type Breakdown"),
-            dataTable(["Client Type", "Count"], clientData.map(c => [c.name, String(c.value)]), [6480, 2880]),
-            spacer(16),
-          ] : []),
+    const newPage = () => {
+      doc.addPage()
+      y = 44
+    }
 
-          // ── Geographic ────────────────────────────────────────────────────
-          new Paragraph({ children: [new PageBreak()] }),
-          heading1("Geographic Distribution"),
-          heading2("Top Countries by Opportunities"),
-          ...barRows(geoData),
-          spacer(8),
-          ...(geoData.length ? [dataTable(
-            ["Country", "Opportunities", "Business Lines"],
-            geoData.map(g => [g.country, String(g.value), (g.businessLines || []).join(", ").slice(0, 45)]),
-            [2520, 1440, 5400]
-          )] : []),
-          spacer(16),
+    const hline = (yy:number, col:[number,number,number]=[210,210,210], x1=ML, x2=PW-MR) => {
+      doc.setDrawColor(...col)
+      doc.setLineWidth(0.5)
+      doc.line(x1, yy, x2, yy)
+    }
 
-          // ── Origin ────────────────────────────────────────────────────────
-          ...(originData.length ? [
-            heading1("BD Origin"),
-            dataTable(["Origin", "Count"], originData.map(o => [o.name, String(o.value)]), [6480, 2880]),
-            spacer(16),
-          ] : []),
+    // ── section heading ───────────────────────────────────────────────────────
+    const H1_H = 30
+    const heading1 = (text:string) => {
+      ensure(H1_H + 20)
+      doc.setFillColor(...BRAND)
+      doc.rect(ML, y, CONTENT_W, H1_H, "F")
+      sf("bold", 13, WHITE)
+      doc.text(text, ML + 10, y + 20)
+      y += H1_H + 10
+    }
 
-          // ── Pipeline Status ───────────────────────────────────────────────
-          heading1("Pipeline Status"),
-          ...(statusData.length ? [dataTable(
-            ["Status", "Count"],
-            statusData.map((s: any) => [s.name || s.status, String(s.value)]),
-            [6480, 2880]
-          )] : [new Paragraph({ children: [new TextRun({ text: "No status data available.", color: "888888", size: 18 })] })]),
-          spacer(16),
+    const heading2 = (text:string) => {
+      ensure(24)
+      sf("bold", 10, BRAND2)
+      doc.text(text, ML, y)
+      y += 16
+    }
 
-          // ── Win Rates ─────────────────────────────────────────────────────
-          ...(winRateData.length ? [
-            heading1("Win Rate Analysis"),
-            dataTable(
-              ["Category", "Win Rate", "Won", "Total"],
-              winRateData.map((w: any) => [w.name, `${w.winRate}%`, String(w.won ?? ""), String(w.total ?? "")]),
-              [3600, 2160, 1800, 1800]
-            ),
-            spacer(16),
-          ] : []),
+    const spacer = (pt=8) => { y += pt }
 
-          // ── Opportunities ─────────────────────────────────────────────────
-          new Paragraph({ children: [new PageBreak()] }),
-          heading1(`Opportunities List  (${rawData.length} of ${filteredData.rawData?.length ?? 0} shown)`),
-          ...(rawData.length ? [dataTable(
-            ["Type", "Year", "Qtr", "Project Title", "Organisation", "Country", "Status"],
-            rawData.map(r => [
-              r.bd || "",
-              r.year || "",
-              r.quarter || "",
-              (r.title || "").slice(0, 42),
-              (r.organization || "").slice(0, 24),
-              (r.country || "").slice(0, 18),
-              r.status || "",
-            ]),
-            [600, 660, 540, 2880, 1800, 1440, 840]
-          )] : [new Paragraph({ children: [new TextRun({ text: "No data matches the selected filters.", color: "888888", size: 18 })] })]),
-        ]
-      }]
+    // ── bar-chart section ─────────────────────────────────────────────────────
+    const BAR_ROW_H = 18
+    const LABEL_W   = 140
+    const COUNT_W   = 32
+    const BAR_W     = CONTENT_W - LABEL_W - COUNT_W - 8
+
+    const barRows = (items:any[], labelKey="name", valueKey="value") => {
+      if (!items.length) return
+      const maxVal = Math.max(...items.map((i:any)=>i[valueKey]||0), 1)
+      items.forEach((item:any) => {
+        ensure(BAR_ROW_H + 2)
+        const label = String(item[labelKey]||"").slice(0,26)
+        const val   = item[valueKey]||0
+        const fill  = Math.max(2, Math.round((val/maxVal)*BAR_W))
+        const bx    = ML + LABEL_W + 4
+        const by    = y - BAR_ROW_H + 5
+
+        // label
+        sf("normal", 7.5, GRAY)
+        doc.text(label, ML, y - 3)
+
+        // background track
+        doc.setFillColor(...LIGHT)
+        doc.roundedRect(bx, by, BAR_W, BAR_ROW_H - 6, 2, 2, "F")
+
+        // filled bar
+        doc.setFillColor(...BRAND)
+        doc.roundedRect(bx, by, fill, BAR_ROW_H - 6, 2, 2, "F")
+
+        // value
+        sf("bold", 7.5, BRAND)
+        doc.text(String(val), bx + BAR_W + 5, y - 3)
+
+        y += BAR_ROW_H
+      })
+      spacer(6)
+    }
+
+    // ── data table ────────────────────────────────────────────────────────────
+    const ROW_H = 17
+
+    const drawTable = (headers:string[], rows:string[][], colWidths:number[]) => {
+      const tableW = colWidths.reduce((a,b)=>a+b,0)
+
+      // header — always keep header + at least 1 data row together
+      ensure(ROW_H * 2 + 4)
+
+      // header bg
+      doc.setFillColor(...BRAND)
+      doc.rect(ML, y, tableW, ROW_H, "F")
+      sf("bold", 7, WHITE)
+      let x = ML
+      headers.forEach((h,i)=>{ doc.text(h, x+4, y+11); x+=colWidths[i] })
+      y += ROW_H
+
+      rows.forEach((row,ri)=>{
+        ensure(ROW_H)
+        doc.setFillColor(...(ri%2===0 ? WHITE : ROWALT))
+        doc.rect(ML, y, tableW, ROW_H, "F")
+        // bottom rule
+        doc.setDrawColor(218,218,228)
+        doc.setLineWidth(0.3)
+        doc.line(ML, y+ROW_H, ML+tableW, y+ROW_H)
+
+        sf("normal", 7, DKGRAY)
+        let x = ML
+        row.forEach((cell,i)=>{
+          const txt = String(cell||"").slice(0,55)
+          doc.text(txt, x+4, y+11)
+          x+=colWidths[i]
+        })
+        y += ROW_H
+      })
+      spacer(10)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // COVER PAGE
+    // ══════════════════════════════════════════════════════════════════════════
+    doc.setFillColor(...BRAND)
+    doc.rect(0, 0, PW, 160, "F")
+
+    sf("bold", 26, WHITE)
+    doc.text("Business Development", ML, 72)
+    doc.text("Dashboard Report", ML, 102)
+
+    sf("normal", 9, [180,184,220] as [number,number,number])
+    const subtitle = [
+      activeFilters.year,
+      activeFilters.quarter,
+      activeFilters.bdCategory !== "All" ? activeFilters.bdCategory : null,
+      `Generated ${new Date().toLocaleDateString("en-GB", {day:"2-digit",month:"short",year:"numeric"})}`,
+    ].filter(Boolean).join("  ·  ")
+    doc.text(subtitle, ML, 126)
+
+    // accent line
+    doc.setFillColor(255,200,60)
+    doc.rect(ML, 140, 60, 4, "F")
+
+    y = 180
+
+    // ── KPI cards ─────────────────────────────────────────────────────────────
+    const kpis = [
+      { label:"Total Opportunities", value:String(summaryData.totalOpportunities), sub:`${activeFilters.year} · ${activeFilters.quarter}` },
+      { label:"RFP / EOI",           value:`${summaryData.rfpCount} / ${summaryData.eoiCount}` },
+      { label:"Total Budget",         value:summaryData.totalBudget },
+      { label:"Countries Covered",    value:String(summaryData.countriesCount) },
+      { label:"Upcoming Deadlines",   value:String(summaryData.upcomingDeadlines), sub:"next 7 days" },
+    ]
+    const COLS = 3
+    const CARD_W = (CONTENT_W - (COLS-1)*8) / COLS
+    const CARD_H = 58
+
+    kpis.forEach((k,idx)=>{
+      const col = idx % COLS
+      const row = Math.floor(idx / COLS)
+      const cx = ML + col*(CARD_W+8)
+      const cy = y + row*(CARD_H+8)
+      // shadow effect
+      doc.setFillColor(210,212,235)
+      doc.roundedRect(cx+2, cy+2, CARD_W, CARD_H, 4, 4, "F")
+      // card
+      doc.setFillColor(...LIGHT)
+      doc.roundedRect(cx, cy, CARD_W, CARD_H, 4, 4, "F")
+      // left accent
+      doc.setFillColor(...BRAND)
+      doc.rect(cx, cy, 3, CARD_H, "F")
+
+      sf("normal", 7, GRAY)
+      doc.text(k.label, cx+10, cy+16)
+      sf("bold", 20, BRAND)
+      doc.text(k.value, cx+10, cy+38)
+      if (k.sub) { sf("normal", 6.5, GRAY); doc.text(k.sub, cx+10, cy+50) }
     })
+    y += Math.ceil(kpis.length/COLS)*(CARD_H+8) + 16
 
-    const buffer = await Packer.toBuffer(doc)
-    const fileName = `BD_Report_${activeFilters.year}_${activeFilters.quarter}_${new Date().toISOString().split("T")[0]}.docx`
+    // ══════════════════════════════════════════════════════════════════════════
+    // BUSINESS LINE
+    // ══════════════════════════════════════════════════════════════════════════
+    if (blData.length) {
+      heading1("Business Line Distribution")
+      barRows(blData)
+      drawTable(
+        ["Business Line","Count","%"],
+        blData.map(b=>[b.name, String(b.value), b.percentage?`${b.percentage}%`:""]),
+        [220, 70, 70]
+      )
+    }
 
-    return new NextResponse(buffer, {
+    // ══════════════════════════════════════════════════════════════════════════
+    // CLIENT TYPE
+    // ══════════════════════════════════════════════════════════════════════════
+    if (clientData.length) {
+      heading1("Client Type Breakdown")
+      barRows(clientData)
+      drawTable(["Client Type","Count"], clientData.map(c=>[c.name,String(c.value)]), [290,70])
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // GEOGRAPHIC DISTRIBUTION
+    // ══════════════════════════════════════════════════════════════════════════
+    heading1("Geographic Distribution")
+    if (geoData.length) {
+      heading2("Top Countries by Opportunities")
+      barRows(geoData, "country", "value")
+      drawTable(
+        ["Country","Count","Business Lines"],
+        geoData.map(g=>[g.country, String(g.value), (g.businessLines||[]).join(", ").slice(0,46)]),
+        [130, 50, 180]
+      )
+    } else {
+      sf("normal",9,GRAY); doc.text("No geographic data available.", ML, y); y+=18
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // BD ORIGIN
+    // ══════════════════════════════════════════════════════════════════════════
+    if (originData.length) {
+      heading1("BD Origin")
+      barRows(originData)
+      drawTable(["Origin","Count"], originData.map(o=>[o.name,String(o.value)]), [290,70])
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PIPELINE STATUS
+    // ══════════════════════════════════════════════════════════════════════════
+    heading1("Pipeline Status")
+    if (statusData.length) {
+      barRows(statusData, "name", "value")
+      drawTable(
+        ["Status","Count"],
+        statusData.map((s:any)=>[s.name||s.status, String(s.value)]),
+        [290,70]
+      )
+    } else {
+      sf("normal",9,GRAY); doc.text("No status data available.",ML,y); y+=18
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // WIN RATE ANALYSIS
+    // ══════════════════════════════════════════════════════════════════════════
+    if (winRateData.length) {
+      heading1("Win Rate Analysis")
+      drawTable(
+        ["Category","Win Rate","Won","Lost","Total"],
+        winRateData.map((w:any)=>[w.name,`${w.winRate}%`,String(w.won??""),String(w.lost??""),String(w.total??"")]),
+        [168, 68, 50, 50, 50]
+      )
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // OPPORTUNITIES LIST — always starts on a new page
+    // ══════════════════════════════════════════════════════════════════════════
+    newPage()
+    heading1(`Opportunities List  (${rawData.length} of ${filteredData.rawData?.length??0} shown)`)
+
+    if (rawData.length) {
+      drawTable(
+        ["Type","Yr","Qtr","Project Title","Organisation","Country","Status"],
+        rawData.map(r=>[
+          r.bd||"",
+          r.year||"",
+          r.quarter||"",
+          (r.title||"").slice(0,36),
+          (r.organization||"").slice(0,22),
+          (r.country||"").slice(0,18),
+          r.status||"",
+        ]),
+        [30, 26, 26, 190, 120, 96, 55]
+      )
+    } else {
+      sf("normal",9,GRAY)
+      doc.text("No data matches the selected filters.",ML,y); y+=18
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PAGE NUMBERS + FOOTER
+    // ══════════════════════════════════════════════════════════════════════════
+    const totalPages = (doc.internal as any).getNumberOfPages()
+    for (let p=1; p<=totalPages; p++) {
+      doc.setPage(p)
+      // footer bar
+      doc.setFillColor(...BRAND)
+      doc.rect(0, PH-FOOTER_H, PW, FOOTER_H, "F")
+      sf("normal", 7, WHITE)
+      doc.text("Business Development Dashboard", ML, PH-10)
+      doc.text(`Page ${p} of ${totalPages}`, PW/2, PH-10, {align:"center"})
+      doc.text(new Date().toLocaleDateString("en-GB"), PW-MR, PH-10, {align:"right"})
+    }
+
+    const pdfBuffer = Buffer.from(doc.output("arraybuffer"))
+    const fileName  = `BD_Report_${activeFilters.year}_${activeFilters.quarter}_${new Date().toISOString().split("T")[0]}.pdf`
+
+    return new NextResponse(pdfBuffer, {
       status: 200,
       headers: {
-        "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="${fileName}"`,
       },
     })
   } catch (error) {
     console.error("[Report API] Error:", error)
     return NextResponse.json(
-      { error: `Failed to generate report: ${error instanceof Error ? error.message : "Unknown error"}` },
-      { status: 500 }
+      { error:`Failed to generate report: ${error instanceof Error ? error.message : "Unknown error"}` },
+      { status:500 }
     )
   }
 }
