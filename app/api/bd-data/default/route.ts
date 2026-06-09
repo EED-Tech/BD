@@ -9,9 +9,9 @@ export async function GET(request: NextRequest) {
     const XLSX = await import("xlsx")
 
     // Derive the base URL from the incoming request — works locally and on Netlify
-    const { origin } = new URL(request.url)
-    const fileUrl = `${origin}/${encodeURIComponent(FILE_NAME)}`
-
+    const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || "localhost:3000"
+    const proto = request.headers.get("x-forwarded-proto") || "https"
+    const fileUrl = `${proto}://${host}/${encodeURIComponent(FILE_NAME)}`
     const res = await fetch(fileUrl)
     if (!res.ok) {
       return NextResponse.json(
