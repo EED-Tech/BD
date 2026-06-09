@@ -51,9 +51,7 @@ export default function LeafletPartnersMap({ partners }: LeafletPartnersMapProps
     const loadWorldData = async () => {
       try {
         // Using a simplified world countries dataset
-        const response = await fetch(
-          "https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson",
-        )
+        const response = await fetch("/world.geojson")
         const data = await response.json()
         setWorldData(data)
       } catch (error) {

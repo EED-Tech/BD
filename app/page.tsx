@@ -616,6 +616,7 @@ export default function PowerBIDashboard() {
             winRateData: filteredData.winRateData || [],
             originData: filteredData.originData || [],
             serviceOfferingData: filteredData.serviceOfferingData || [],
+            teamAssignmentData: filteredData.teamAssignmentData || [],
           },
         }),
       })
