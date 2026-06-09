@@ -1,11 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
 import * as XLSX from "xlsx"
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-  process.env.SUPABASE_SERVICE_ROLE_KEY || "",
-)
+// Force dynamic — prevents Next.js from statically rendering this route at build time
+export const dynamic = "force-dynamic"
 
 interface Partner {
   id: string
@@ -25,17 +22,23 @@ export async function GET(request: NextRequest) {
   try {
     console.log("[Partners API] Starting request...")
 
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+    if (!supabaseUrl || !supabaseKey) {
       console.log("[Partners API] Missing Supabase credentials")
       return NextResponse.json({ error: "Missing credentials", data: [] }, { status: 500 })
     }
 
+    // createClient is called here — inside the handler — never at build time
+    const { createClient } = await import("@supabase/supabase-js")
+    const supabase = createClient(supabaseUrl, supabaseKey)
+
     const bucketName = "BDTracker"
     const fileName = "BD Tracker_Live Document.xlsx"
 
-    console.log(`[Partners API] Fetching Excel file from Supabase Storage...`)
+    console.log("[Partners API] Fetching Excel file from Supabase Storage...")
 
-    // Download the file from Supabase Storage
     const { data: fileData, error: downloadError } = await supabase.storage
       .from(bucketName)
       .download(fileName)
@@ -45,9 +48,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Failed to download Excel file", data: [] }, { status: 500 })
     }
 
-    console.log(`[Partners API] ✓ Excel file downloaded successfully!`)
+    console.log("[Partners API] ✓ Excel file downloaded successfully!")
 
-    // Parse the Excel file
     const arrayBuffer = await fileData.arrayBuffer()
     const workbook = XLSX.read(arrayBuffer, { type: "array" })
     const sheetNames = workbook.SheetNames
@@ -56,102 +58,86 @@ export async function GET(request: NextRequest) {
 
     const partners: Partner[] = []
 
-    // Parse Partners Firms sheet
-    const partnersFirmsSheet = sheetNames.find((name) =>
-      name.toLowerCase().includes("partners") && name.toLowerCase().includes("firms"),
+    // ── Partners Firms ────────────────────────────────────────────────────────
+    const firmsSheet = sheetNames.find(
+      (n) => n.toLowerCase().includes("partners") && n.toLowerCase().includes("firms"),
     )
-    if (partnersFirmsSheet) {
-      console.log(`[Partners API] Parsing Partners Firms sheet: ${partnersFirmsSheet}`)
-      const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[partnersFirmsSheet], {
-        header: 1,
-        defval: "",
+    if (firmsSheet) {
+      const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[firmsSheet], {
+        header: 1, defval: "",
       }) as any[][]
 
       if (sheetData.length > 1) {
-        const headers = sheetData[0]
         const headerMap: Record<string, number> = {}
-        headers.forEach((header, index) => {
-          const clean = header?.toString().toLowerCase().trim()
-          if (clean) headerMap[clean] = index
+        sheetData[0].forEach((h, i) => {
+          const clean = h?.toString().toLowerCase().trim()
+          if (clean) headerMap[clean] = i
         })
-
-        console.log(`[Partners API] Partners Firms headers:`, headers)
-
         for (let i = 1; i < sheetData.length; i++) {
           const row = sheetData[i]
           const name = row[headerMap["name"] || headerMap["firm name"] || 0]?.toString().trim()
-
-          if (name && name.length > 0) {
+          if (name) {
             partners.push({
-              id: `firm_${i}_${Date.now()}`,
-              name,
-              type: "firm",
-              country: row[headerMap["country"] || 1]?.toString().trim(),
-              sector: row[headerMap["sector"] || 2]?.toString().trim(),
-              expertise: row[headerMap["expertise"] || 3]?.toString().trim(),
-              contact_person: row[headerMap["contact person"] || 4]?.toString().trim(),
-              designation: row[headerMap["designation"] || 5]?.toString().trim(),
-              email: row[headerMap["email"] || 6]?.toString().trim(),
-              phone: row[headerMap["phone"] || 7]?.toString().trim(),
-              website: row[headerMap["website"] || 8]?.toString().trim(),
+              id: `firm_${i}_${Date.now()}`, name, type: "firm",
+              country:        row[headerMap["country"]        ?? 1]?.toString().trim(),
+              sector:         row[headerMap["sector"]         ?? 2]?.toString().trim(),
+              expertise:      row[headerMap["expertise"]      ?? 3]?.toString().trim(),
+              contact_person: row[headerMap["contact person"] ?? 4]?.toString().trim(),
+              designation:    row[headerMap["designation"]    ?? 5]?.toString().trim(),
+              email:          row[headerMap["email"]          ?? 6]?.toString().trim(),
+              phone:          row[headerMap["phone"]          ?? 7]?.toString().trim(),
+              website:        row[headerMap["website"]        ?? 8]?.toString().trim(),
             })
           }
         }
-        console.log(`[Partners API] Parsed ${partners.length} Partners Firms records`)
+        console.log(`[Partners API] Parsed ${partners.length} firm records`)
       }
     }
 
-    // Parse Partners Individual Experts sheet
-    const partnersExpertsSheet = sheetNames.find((name) =>
-      name.toLowerCase().includes("partners") && name.toLowerCase().includes("expert"),
+    // ── Partners Individual Experts ───────────────────────────────────────────
+    const expertsSheet = sheetNames.find(
+      (n) => n.toLowerCase().includes("partners") && n.toLowerCase().includes("expert"),
     )
-    if (partnersExpertsSheet) {
-      console.log(`[Partners API] Parsing Partners Individual Experts sheet: ${partnersExpertsSheet}`)
-      const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[partnersExpertsSheet], {
-        header: 1,
-        defval: "",
+    if (expertsSheet) {
+      const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[expertsSheet], {
+        header: 1, defval: "",
       }) as any[][]
 
       if (sheetData.length > 1) {
-        const headers = sheetData[0]
         const headerMap: Record<string, number> = {}
-        headers.forEach((header, index) => {
-          const clean = header?.toString().toLowerCase().trim()
-          if (clean) headerMap[clean] = index
+        sheetData[0].forEach((h, i) => {
+          const clean = h?.toString().toLowerCase().trim()
+          if (clean) headerMap[clean] = i
         })
-
-        console.log(`[Partners API] Partners Experts headers:`, headers)
-
-        const startIndex = partners.length
+        const before = partners.length
         for (let i = 1; i < sheetData.length; i++) {
           const row = sheetData[i]
           const name = row[headerMap["name"] || headerMap["expert name"] || 0]?.toString().trim()
-
-          if (name && name.length > 0) {
+          if (name) {
             partners.push({
-              id: `expert_${i}_${Date.now()}`,
-              name,
-              type: "individual",
-              country: row[headerMap["country"] || 1]?.toString().trim(),
-              sector: row[headerMap["sector"] || 2]?.toString().trim(),
-              expertise: row[headerMap["expertise"] || 3]?.toString().trim(),
-              designation: row[headerMap["designation"] || 4]?.toString().trim(),
-              email: row[headerMap["email"] || 5]?.toString().trim(),
-              phone: row[headerMap["phone"] || 6]?.toString().trim(),
-              website: row[headerMap["website"] || 7]?.toString().trim(),
+              id: `expert_${i}_${Date.now()}`, name, type: "individual",
+              country:     row[headerMap["country"]     ?? 1]?.toString().trim(),
+              sector:      row[headerMap["sector"]      ?? 2]?.toString().trim(),
+              expertise:   row[headerMap["expertise"]   ?? 3]?.toString().trim(),
+              designation: row[headerMap["designation"] ?? 4]?.toString().trim(),
+              email:       row[headerMap["email"]       ?? 5]?.toString().trim(),
+              phone:       row[headerMap["phone"]       ?? 6]?.toString().trim(),
+              website:     row[headerMap["website"]     ?? 7]?.toString().trim(),
             })
           }
         }
-        console.log(`[Partners API] Parsed ${partners.length - startIndex} Partners Experts records`)
+        console.log(`[Partners API] Parsed ${partners.length - before} expert records`)
       }
     }
 
-    console.log(`[Partners API] Total unique partners: ${partners.length}`)
+    console.log(`[Partners API] Total partners: ${partners.length}`)
     return NextResponse.json(partners)
   } catch (error) {
     console.error("[Partners API] Error:", error)
-    const message = error instanceof Error ? error.message : "Unknown error"
-    return NextResponse.json({ error: message, data: [] }, { status: 500 })
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unknown error", data: [] },
+      { status: 500 }
+    )
   }
 }
 
