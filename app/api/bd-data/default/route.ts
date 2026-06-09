@@ -4,28 +4,26 @@ import { type NextRequest, NextResponse } from "next/server"
 
 const FILE_NAME = "BD_Tracker_Live Document.xlsx"
 
-export async function GET(_request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
-    // Dynamic imports keep fs/path/xlsx out of the browser bundle
-    const [{ default: fs }, { default: path }, XLSX] = await Promise.all([
-      import("fs"),
-      import("path"),
-      import("xlsx"),
-    ])
+    const XLSX = await import("xlsx")
 
-    // process.cwd() is the project root in both dev and Netlify production
-    const filePath = path.join(process.cwd(), "public", FILE_NAME)
+    // Derive the base URL from the incoming request — works locally and on Netlify
+    const { origin } = new URL(request.url)
+    const fileUrl = `${origin}/${encodeURIComponent(FILE_NAME)}`
 
-    if (!fs.existsSync(filePath)) {
+    const res = await fetch(fileUrl)
+    if (!res.ok) {
       return NextResponse.json(
-        { success: false, error: `File not found at ${filePath}` },
+        { success: false, error: `File not found at ${fileUrl} (status ${res.status})` },
         { status: 404 }
       )
     }
 
-    const buffer   = fs.readFileSync(filePath)
-    const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true })
-    const sheetNames = workbook.SheetNames
+    const arrayBuffer = await res.arrayBuffer()
+    const buffer      = Buffer.from(arrayBuffer)
+    const workbook    = XLSX.read(buffer, { type: "buffer", cellDates: true })
+    const sheetNames  = workbook.SheetNames
 
     function sheetToRows(ws: any): any[][] {
       return XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false }) as any[][]
@@ -118,7 +116,6 @@ export async function GET(_request: NextRequest) {
       ...parseExpertRows(expertSheet ? sheetToRows(workbook.Sheets[expertSheet])  : []),
     ]
 
-    const stats = fs.statSync(filePath)
     return NextResponse.json({
       success: true,
       data: bdRecords,
@@ -129,8 +126,9 @@ export async function GET(_request: NextRequest) {
         eoiCount:      bdRecords.filter((r: any) => r.bd === "EOI").length,
         proposalCount: bdRecords.filter((r: any) => r.bd === "RFP").length,
         partnerCount:  partnerRecords.length,
-        lastModified:  stats.mtime.toISOString(),
-        fileSize:      stats.size,
+        // fetch() has no mtime — use a fixed sentinel so callers don't break
+        lastModified:  new Date().toISOString(),
+        fileSize:      buffer.byteLength,
         sheets:        sheetNames,
         fileName:      FILE_NAME,
       },
